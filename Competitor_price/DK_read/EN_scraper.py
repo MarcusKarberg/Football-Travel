@@ -13,6 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import concurrent.futures
 from datetime import datetime
+import streamlit as st
 
 # --- Setup ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -26,7 +27,7 @@ df_clubs = pd.read_excel(os.path.join(parent_dir, "club_names.xlsx"), sheet_name
 excel_clubs = df_clubs[0].dropna().astype(str).str.strip().tolist()
 
 # Konfiguration
-MAX_WORKERS = 5  # Antal samtidige browsere. Hæv til 5 hvis du har en stærk PC.
+MAX_WORKERS = 5  # Antal samtidige browsere.
 
 def get_driver():
     chrome_options = Options()
@@ -258,31 +259,25 @@ if __name__ == "__main__":
             if provider in df_pivot['Nights']: final_df[col_name_nights] = df_pivot['Nights'][provider]
             else: final_df[col_name_nights] = ""
 
-        # ... (Din kode der bygger final_df er herover) ...
+        # ... (Koden der bygger final_df er herover) ...
 
         # ==========================================
         # GEM FIL (DATA/DATO/FILNAVN)
         # ==========================================
         
-        # 1. Hent dags dato som tekst (f.eks. "2023-10-27")
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        if not final_df.empty:
+            # Konverter DataFrame til CSV-format i hukommelsen (uden at gemme på disken først)
+            csv_data = final_df.to_csv(index=False).encode('utf-8-sig')
 
-        # 2. Definer stien: Script-mappe -> data -> dato-mappe
-        # current_dir er allerede defineret i toppen af dit script
-        base_data_dir = os.path.join(current_dir, "data")
-        date_dir = os.path.join(base_data_dir, today_str)
+            # Vis en knap i Streamlit, som brugeren kan klikke på
+            st.download_button(
+                label="📥 Download EN_priser.csv",
+                data=csv_data,
+                file_name="EN_priser.csv",
+                mime="text/csv"
+            )
+            
+            st.success("Data er klar til download!")
 
-        # 3. Opret mapperne hvis de ikke findes (exist_ok=True gør, at den ikke crasher hvis mappen findes)
-        os.makedirs(date_dir, exist_ok=True)
-
-        # 4. Sammensæt hele stien inklusiv filnavn
-        filename = "EN_priser.csv"
-        full_path = os.path.join(date_dir, filename)
-
-        # 5. Gem filen
-        final_df.to_csv(full_path, sep=",", encoding="utf-8-sig")
-        
-        print(f"✅ Færdig! Filen er gemt her:")
-        print(f"   📂 {full_path}")
-    else:
-        print("❌ Ingen data fundet.")
+        else:
+            st.error("❌ Ingen data fundet.")
