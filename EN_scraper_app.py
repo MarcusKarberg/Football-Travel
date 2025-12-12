@@ -16,16 +16,21 @@ import concurrent.futures
 import streamlit as st
 from datetime import datetime
 
-# --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
+# --- SETUP: Handle Paths for Cloud vs Local ---
+# We force the script to look in the SAME directory for files, not the parent.
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+
+# Try importing Alias, but don't crash if missing (helps with debugging)
 try:
     from Alias import club_alias, suffix_pattern
 except ImportError:
-    st.error("❌ Critical Error: 'Alias.py' was not found in the same folder as this script.")
-    st.stop()
+    st.warning("⚠️ 'Alias.py' not found in the same folder. Aliases will be ignored.")
+    club_alias = {}
+    suffix_pattern = re.compile(r"")
 
 URL = "https://www.fodboldrejseguiden.dk/fodboldrejser-england/"
 
-# --- STREAMLIT CONFIG ---
 st.set_page_config(page_title="Football Scraper", layout="wide")
 st.markdown("""
 <style>
@@ -37,7 +42,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. SETUP CHROME DRIVER (Cloud Compatible) ---
+# --- 1. CLOUD-READY DRIVER SETUP ---
 def get_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless=new") 
@@ -75,19 +80,17 @@ def scroll_slowly(driver):
         if new_height == last_height: break
         last_height = new_height
 
-# --- 2. LOAD DATA (Assumes club_names.xlsx is in the same folder) ---
 @st.cache_resource
 def get_club_names():
-    # We look for the file in the current working directory
-    excel_filename = "club_names.xlsx"
+    # FIX: Look in current_dir, NOT parent_dir
+    excel_path = os.path.join(current_dir, "club_names.xlsx")
     
-    if not os.path.exists(excel_filename):
-        st.error(f"❌ File not found: {excel_filename}")
+    if not os.path.exists(excel_path):
+        st.error(f"❌ Could not find file: {excel_path}")
         return []
         
     try:
-        # Load the EN sheet
-        df_clubs = pd.read_excel(excel_filename, sheet_name="EN", usecols="A", header=None)
+        df_clubs = pd.read_excel(excel_path, sheet_name="EN", usecols="A", header=None)
         return df_clubs[0].dropna().astype(str).str.strip().tolist()
     except Exception as e:
         st.error(f"Error reading Excel: {e}")
@@ -115,7 +118,6 @@ def fetch_website_urls():
         setup_driver.quit()
     return website_data_lower
 
-# --- 3. SCRAPER WORKER ---
 def scrape_specific_club(club_info):
     excel_name, club_url = club_info
     local_data = [] 
@@ -190,13 +192,13 @@ def scrape_specific_club(club_info):
         driver.quit()
     return local_data
 
-# --- 4. MAIN INTERFACE ---
+# --- MAIN APP ---
 def main():
     st.title("⚽ Premier League Scraper Dashboard")
     
     excel_clubs = get_club_names()
     if not excel_clubs:
-        st.stop() 
+        st.stop() # Stop if no clubs found
 
     if "selected_clubs" not in st.session_state:
         st.session_state.selected_clubs = set()
@@ -249,11 +251,9 @@ def main():
             if all_data:
                 df = pd.DataFrame(all_data).drop_duplicates(subset=['Match', 'Provider'])
                 df['Date'] = pd.to_datetime(df['Date'])
-                
-                # Pivot and organize columns
+                # Pivot
                 df_pivot = df.pivot(index='Match', columns='Provider', values=['Price', 'Nights'])
                 final_df = pd.DataFrame(index=df_pivot.index)
-                
                 for prov in sorted(df['Provider'].unique()):
                     if prov in df_pivot['Price']: final_df[prov] = df_pivot['Price'][prov]
                     if prov in df_pivot['Nights']: final_df[f"{prov} nætter"] = df_pivot['Nights'][prov]
