@@ -13,6 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import concurrent.futures
 import streamlit as st
+from selenium.webdriver.chrome.service import Service
 
 # --- Setup Paths & Imports ---
 # We use try/except to handle running this both as a script and via Streamlit
@@ -58,7 +59,13 @@ def get_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-notifications")
     chrome_options.add_argument("--log-level=3")
-    return webdriver.Chrome(options=chrome_options)
+    if os.path.exists("/usr/bin/chromium"):
+        chrome_options.binary_location = "/usr/bin/chromium"
+        
+    service = Service()
+    # ------------------------------------------
+
+    return webdriver.Chrome(service=service, options=chrome_options)
 
 def clean(text):
     if not isinstance(text, str): return ""
