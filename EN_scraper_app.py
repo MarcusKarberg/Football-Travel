@@ -299,7 +299,7 @@ def main():
                     worksheet = writer.sheets['Prices']
                     
                     # 2. Add and Format Title at A1
-                    worksheet['A1'] = "GGGG"
+                    worksheet['A1'] = "Prices for ticket + hotel"
                     worksheet['A1'].font = Font(size=16, bold=True)
                     
                     # 3. Manually set width for Column A
