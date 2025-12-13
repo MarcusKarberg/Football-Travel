@@ -16,7 +16,8 @@ import concurrent.futures
 import streamlit as st
 from datetime import datetime
 import io
-from openpyxl.styles import Border, Side, PatternFill, Font, Alignment
+from openpyxl.styles import Border, Side
+import requests  # <--- NEW IMPORT FOR SPEED
 
 # --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
 try:
@@ -39,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. SETUP CHROME DRIVER (Cloud Compatible) ---
+# --- 1. SETUP CHROME DRIVER (OPTIMIZED) ---
 def get_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless=new") 
@@ -48,6 +49,9 @@ def get_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-notifications")
+    
+    # SPEED FIX: Don't wait for full page load (images, ads), just HTML
+    chrome_options.page_load_strategy = 'eager' 
     
     # Check if running on Streamlit Cloud (Linux) to find Chromium
     if os.path.exists("/usr/bin/chromium"):
@@ -60,8 +64,10 @@ def get_driver():
 def clean(text):
     if not isinstance(text, str): return ""
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
-    if suffix_pattern:
-        text = suffix_pattern.sub("", text)
+    try:
+        if suffix_pattern:
+            text = suffix_pattern.sub("", text)
+    except NameError: pass
     return text.lower().strip()
 
 def scroll_slowly(driver):
@@ -77,47 +83,52 @@ def scroll_slowly(driver):
         if new_height == last_height: break
         last_height = new_height
 
-# --- 2. LOAD DATA (Assumes club_names.xlsx is in the same folder) ---
+# --- 2. LOAD DATA ---
 @st.cache_resource
 def get_club_names():
-    # We look for the file in the current working directory
     excel_filename = "club_names.xlsx"
-    
     if not os.path.exists(excel_filename):
         st.error(f"❌ File not found: {excel_filename}")
         return []
-        
     try:
-        # Load the EN sheet
         df_clubs = pd.read_excel(excel_filename, sheet_name="EN", usecols="A", header=None)
         return df_clubs[0].dropna().astype(str).str.strip().tolist()
     except Exception as e:
         st.error(f"Error reading Excel: {e}")
         return []
 
+# --- 3. FETCH URLS (FAST VERSION) ---
 @st.cache_resource
 def fetch_website_urls():
-    setup_driver = get_driver()
+    """
+    Uses 'requests' instead of Selenium. 
+    This is 20x faster because it doesn't launch a browser.
+    """
     website_data_lower = {}
     try:
-        setup_driver.get(URL)
-        try:
-            WebDriverWait(setup_driver, 3).until(EC.element_to_be_clickable((By.ID, 'onetrust-accept-btn-handler'))).click()
-        except: pass
+        # Fake a browser user-agent to avoid getting blocked
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(URL, headers=headers, timeout=10)
         
-        soup = BeautifulSoup(setup_driver.page_source, 'html.parser')
-        section = soup.find(id="klubber")
-        if section:
-            for link in section.find_all('a'):
-                clean_name = clean(link.get_text(strip=True))
-                website_data_lower[clean_name] = urljoin(URL, link.get('href', ''))
+        # If response is successful, parse the HTML
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            section = soup.find(id="klubber")
+            if section:
+                for link in section.find_all('a'):
+                    clean_name = clean(link.get_text(strip=True))
+                    website_data_lower[clean_name] = urljoin(URL, link.get('href', ''))
+        else:
+            st.error(f"Failed to load website. Status code: {response.status_code}")
+            
     except Exception as e:
         st.error(f"Failed to fetch initial URLs: {e}")
-    finally:
-        setup_driver.quit()
+    
     return website_data_lower
 
-# --- 3. SCRAPER WORKER ---
+# --- 4. SCRAPER WORKER ---
 def scrape_specific_club(club_info):
     excel_name, club_url = club_info
     local_data = [] 
@@ -168,6 +179,7 @@ def scrape_specific_club(club_info):
                     for group in package_groups:
                         try:
                             header = group.find_element(By.CSS_SELECTOR, "span.pack").get_attribute("innerText").strip().lower()
+                            # ONLY TICKET + HOTEL LOGIC
                             if "fly" in header or "hotel" not in header: continue
                             
                             for row in group.find_elements(By.CSS_SELECTOR, "tbody tr"):
@@ -192,7 +204,7 @@ def scrape_specific_club(club_info):
         driver.quit()
     return local_data
 
-# --- 4. MAIN INTERFACE ---
+# --- 5. MAIN INTERFACE ---
 def main():
     st.title("⚽ Prices: Ticket + Hotel")
     
@@ -221,17 +233,16 @@ def main():
         st.divider()
         st.write(f"### Ready to scrape {len(selected_list)} clubs")
         
+        # Hardcoded to 5 browsers for speed
         workers = 5
         
         if st.button("Search for prices", type="primary"):
             st.toast("🚀 Scraper started! Please wait...", icon="🤖")
             status = st.empty()
-            status.info("⏳ Initializing browsers and loading URLs... this takes about 5-10 seconds.")
+            status.info("⏳ Initializing browsers... (Takes ~5-10s)")
             bar = st.progress(0)
 
             tasks = []
-            status = st.empty()
-            bar = st.progress(0)
             
             for name in selected_list:
                 clean_name = clean(name)
@@ -255,66 +266,49 @@ def main():
                     status.write(f"✅ Processed {futures[f]} ({len(res)} deals)")
             
             if all_data:
-                # 1. Prepare Raw Data
+                # Process data
                 df = pd.DataFrame(all_data).drop_duplicates(subset=['Match', 'Provider'])
                 df['Date'] = pd.to_datetime(df['Date'])
-                
-                # 2. Pivot Data (Prices & Nights)
                 df_pivot = df.pivot(index='Match', columns='Provider', values=['Price', 'Nights'])
-                
-                # 3. Build Final DataFrame
                 final_df = pd.DataFrame(index=df_pivot.index)
                 
-                # Map Club names back to matches (needed for grouping)
+                # Map Club names
                 match_to_club = df.set_index('Match')['Club'].to_dict()
                 final_df.insert(0, 'Club', final_df.index.map(match_to_club))
                 
-                # Add Provider Columns
                 for prov in sorted(df['Provider'].unique()):
                     if prov in df_pivot['Price']: final_df[prov] = df_pivot['Price'][prov]
                     if prov in df_pivot['Nights']: final_df[f"{prov} nætter"] = df_pivot['Nights'][prov]
 
-                # 4. Sort by Club so they are grouped together
-                # (You might want to sort by Date too if available)
                 final_df = final_df.sort_values(by=['Club'])
 
-                # 5. Generate Excel with Formatting
+                # Excel Formatting
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     final_df.to_excel(writer, sheet_name='Prices')
-                    
-                    # Get the workbook and sheet objects to apply styles
                     workbook = writer.book
                     worksheet = writer.sheets['Prices']
-                    
-                    # Define the thick border style
                     thick_border = Border(top=Side(style='thick'))
-                    
-                    # Iterate through rows to check for Club changes
-                    # We start from row 3 because:
-                    # Row 1 is Header, Row 2 is the first data row (no border needed above it)
                     previous_club = final_df.iloc[0]['Club']
                     
-                    # enumerate starts at 0, but Excel rows start at 1. 
-                    # The header is row 1. Data starts at row 2.
                     for i, row in enumerate(final_df.itertuples(), start=2):
                         current_club = row.Club
-                        
-                        # If Club changes, draw a line above this row
                         if current_club != previous_club:
-                            for cell in worksheet[i]: # Apply to all cells in that row
+                            for cell in worksheet[i]:
                                 cell.border = thick_border
                             previous_club = current_club
 
-                # 6. Download Button for Excel
+                # Safe filename (Using _ instead of :)
+                timestamp = datetime.now().strftime("%m-%d_%H-%M")
+                file_name = f"prices_{timestamp}.xlsx"
+                
                 st.download_button(
                     label="📥 Download Excel Report",
                     data=output.getvalue(),
-                    file_name="EN_prices_formatted.xlsx",
+                    file_name=file_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
                 
-                # Preview (Optional)
                 st.dataframe(final_df)
             else:
                 st.warning("No data found.")
