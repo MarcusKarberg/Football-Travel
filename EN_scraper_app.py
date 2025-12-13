@@ -15,6 +15,8 @@ from bs4 import BeautifulSoup
 import concurrent.futures
 import streamlit as st
 from datetime import datetime
+import io
+from openpyxl.styles import Border, Side, PatternFill, Font, Alignment
 
 # --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
 try:
@@ -166,7 +168,7 @@ def scrape_specific_club(club_info):
                     for group in package_groups:
                         try:
                             header = group.find_element(By.CSS_SELECTOR, "span.pack").get_attribute("innerText").strip().lower()
-                            if "fly" in header or "hotel" not in header: continue
+                            if "fly" in header or "hotel" not n bnm in header: continue
                             
                             for row in group.find_elements(By.CSS_SELECTOR, "tbody tr"):
                                 try:
@@ -222,6 +224,11 @@ def main():
         workers = 5
         
         if st.button("Search for prices", type="primary"):
+            st.toast("🚀 Scraper started! Please wait...", icon="🤖")
+            status = st.empty()
+            status.info("⏳ Initializing browsers and loading URLs... this takes about 5-10 seconds.")
+            bar = st.progress(0)
+
             tasks = []
             status = st.empty()
             bar = st.progress(0)
@@ -248,19 +255,67 @@ def main():
                     status.write(f"✅ Processed {futures[f]} ({len(res)} deals)")
             
             if all_data:
+                # 1. Prepare Raw Data
                 df = pd.DataFrame(all_data).drop_duplicates(subset=['Match', 'Provider'])
                 df['Date'] = pd.to_datetime(df['Date'])
                 
-                # Pivot and organize columns
+                # 2. Pivot Data (Prices & Nights)
                 df_pivot = df.pivot(index='Match', columns='Provider', values=['Price', 'Nights'])
+                
+                # 3. Build Final DataFrame
                 final_df = pd.DataFrame(index=df_pivot.index)
                 
+                # Map Club names back to matches (needed for grouping)
+                match_to_club = df.set_index('Match')['Club'].to_dict()
+                final_df.insert(0, 'Club', final_df.index.map(match_to_club))
+                
+                # Add Provider Columns
                 for prov in sorted(df['Provider'].unique()):
                     if prov in df_pivot['Price']: final_df[prov] = df_pivot['Price'][prov]
                     if prov in df_pivot['Nights']: final_df[f"{prov} nætter"] = df_pivot['Nights'][prov]
+
+                # 4. Sort by Club so they are grouped together
+                # (You might want to sort by Date too if available)
+                final_df = final_df.sort_values(by=['Club'])
+
+                # 5. Generate Excel with Formatting
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    final_df.to_excel(writer, sheet_name='Prices')
+                    
+                    # Get the workbook and sheet objects to apply styles
+                    workbook = writer.book
+                    worksheet = writer.sheets['Prices']
+                    
+                    # Define the thick border style
+                    thick_border = Border(top=Side(style='thick'))
+                    
+                    # Iterate through rows to check for Club changes
+                    # We start from row 3 because:
+                    # Row 1 is Header, Row 2 is the first data row (no border needed above it)
+                    previous_club = final_df.iloc[0]['Club']
+                    
+                    # enumerate starts at 0, but Excel rows start at 1. 
+                    # The header is row 1. Data starts at row 2.
+                    for i, row in enumerate(final_df.itertuples(), start=2):
+                        current_club = row.Club
+                        
+                        # If Club changes, draw a line above this row
+                        if current_club != previous_club:
+                            for cell in worksheet[i]: # Apply to all cells in that row
+                                cell.border = thick_border
+                            previous_club = current_club
+
+                # 6. Download Button for Excel
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=output.getvalue(),
+                    file_name="EN_prices_formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
                 
+                # Preview (Optional)
                 st.dataframe(final_df)
-                st.download_button("📥 Download CSV", final_df.to_csv().encode('utf-8-sig'), "competitor_prices.csv", "text/csv")
             else:
                 st.warning("No data found.")
 
