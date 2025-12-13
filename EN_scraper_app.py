@@ -166,7 +166,7 @@ def scrape_specific_club(club_info):
                     for group in package_groups:
                         try:
                             header = group.find_element(By.CSS_SELECTOR, "span.pack").get_attribute("innerText").strip().lower()
-                            if "fly" in header or "hotel" not n bnm in header: continue
+                            if "fly" in header or "hotel" not in header: continue
                             
                             for row in group.find_elements(By.CSS_SELECTOR, "tbody tr"):
                                 try:
