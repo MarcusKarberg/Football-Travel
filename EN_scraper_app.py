@@ -16,8 +16,10 @@ import concurrent.futures
 import streamlit as st
 from datetime import datetime
 import io
-from openpyxl.styles import Border, Side
+from openpyxl.styles import Border, Side, PatternFill
 import requests  # <--- NEW IMPORT FOR SPEED
+from openpyxl.utils import get_column_letter
+
 
 # --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
 try:
@@ -140,15 +142,15 @@ def scrape_specific_club(club_info):
             try:
                 cookie_btn = driver.find_element(By.ID, 'onetrust-accept-btn-handler')
                 driver.execute_script("arguments[0].click();", cookie_btn)
-                time.sleep(1)
+                time.sleep(0.8)
                 break
-            except: time.sleep(1)
+            except: time.sleep(0.8)
 
         try:
-            WebDriverWait(driver, 8).until(EC.presence_of_element_located((By.CLASS_NAME, "match")))
+            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CLASS_NAME, "match")))
             scroll_slowly(driver)
             driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(1.5) 
+            time.sleep(1) 
 
             matches = driver.find_elements(By.CLASS_NAME, "match")
             for i, match in enumerate(matches):
@@ -166,12 +168,12 @@ def scrape_specific_club(club_info):
                     
                     toggle_btn = match.find_element(By.CSS_SELECTOR, ".togglemodule .koebsknap.toggle")
                     driver.execute_script("arguments[0].click();", toggle_btn)
-                    time.sleep(0.8) 
+                    time.sleep(0.6) 
                     
                     package_groups = match.find_elements(By.CSS_SELECTOR, ".packageholder .table-outer")
                     if not package_groups:
                         driver.execute_script("arguments[0].click();", toggle_btn)
-                        time.sleep(0.8)
+                        time.sleep(0.6)
                         package_groups = match.find_elements(By.CSS_SELECTOR, ".packageholder .table-outer")
                     
                     if not package_groups: continue
@@ -231,7 +233,7 @@ def main():
     selected_list = list(st.session_state.selected_clubs)
     if selected_list:
         st.divider()
-        st.write(f"### Ready to scrape {len(selected_list)} clubs")
+        st.write(f"### Search prices for {len(selected_list)} clubs")
         
         # Hardcoded to 5 browsers for speed
         workers = 5
@@ -239,7 +241,7 @@ def main():
         if st.button("Search for prices", type="primary"):
             st.toast("🚀 Scraper started! Please wait...", icon="🤖")
             status = st.empty()
-            status.info("⏳ Initializing browsers... (Takes ~5-10s)")
+            status.info("⏳ Initializing browsers... (Takes ~15-20s)")
             bar = st.progress(0)
 
             tasks = []
@@ -269,6 +271,12 @@ def main():
                 # Process data
                 df = pd.DataFrame(all_data).drop_duplicates(subset=['Match', 'Provider'])
                 df['Date'] = pd.to_datetime(df['Date'])
+                
+                # Convert to numbers
+                df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+                df['Nights'] = pd.to_numeric(df['Nights'], errors='coerce')
+                
+                # Pivot
                 df_pivot = df.pivot(index='Match', columns='Provider', values=['Price', 'Nights'])
                 final_df = pd.DataFrame(index=df_pivot.index)
                 
@@ -280,25 +288,87 @@ def main():
                     if prov in df_pivot['Price']: final_df[prov] = df_pivot['Price'][prov]
                     if prov in df_pivot['Nights']: final_df[f"{prov} nætter"] = df_pivot['Nights'][prov]
 
+                # Sort by Club
                 final_df = final_df.sort_values(by=['Club'])
 
+                # Save list & Drop Column
+                ordered_clubs = final_df['Club'].tolist()
+                final_df = final_df.drop(columns=['Club'])
+
+                # Excel Formatting
+                output = io.BytesIO()
                 # Excel Formatting
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     final_df.to_excel(writer, sheet_name='Prices')
                     workbook = writer.book
                     worksheet = writer.sheets['Prices']
-                    thick_border = Border(top=Side(style='thick'))
-                    previous_club = final_df.iloc[0]['Club']
                     
-                    for i, row in enumerate(final_df.itertuples(), start=2):
-                        current_club = row.Club
-                        if current_club != previous_club:
-                            for cell in worksheet[i]:
-                                cell.border = thick_border
-                            previous_club = current_club
+                    # 1. Manually set width for Column A (Match Name)
+                    worksheet.column_dimensions['A'].width = 25
+                    
+                    # 2. Define Styles
+                    thick_border = Border(top=Side(style='medium'))
+                    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") # Light Green
+                    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")   # Light Red
 
-                # Safe filename (Using _ instead of :)
+                    # 3. Identify Price Columns (so we don't color "Nights" columns)
+                    price_col_indices = []
+                    for i, col_name in enumerate(final_df.columns, start=2): # start=2 because col 1 is Index
+                        col_letter = get_column_letter(i)
+                        
+                        # Auto-fit width
+                        worksheet.column_dimensions[col_letter].width = len(str(col_name)) + 3
+                        
+                        # Check if it is a Price column (assumes 'nætter' is in the nights column header)
+                        if "nætter" not in str(col_name).lower():
+                            price_col_indices.append(i)
+
+                    # 4. Loop Rows for Borders AND Colors
+                    previous_club = ordered_clubs[0]
+                    
+                    # Enumerate gives us (0, clubname), (1, clubname)...
+                    for i, club_name in enumerate(ordered_clubs):
+                        excel_row = i + 2  # Data starts at Excel Row 2
+                        
+                        # --- BORDER LOGIC ---
+                        # Skip the very first row (i=0), then check if club changed
+                        if i > 0 and club_name != ordered_clubs[i-1]:
+                            for cell in worksheet[excel_row]:
+                                cell.border = thick_border
+                        
+                        # --- COLOR LOGIC (High/Low) ---
+                        row_prices = []
+                        
+                        # Pass 1: Collect all numeric prices in this row
+                        for col_idx in price_col_indices:
+                            cell_val = worksheet.cell(row=excel_row, column=col_idx).value
+                            if isinstance(cell_val, (int, float)):
+                                row_prices.append(cell_val)
+                        
+                        if row_prices:
+                            highest_val = max(row_prices)
+                            
+                            # Find lowest value strictly greater than 10
+                            valid_lows = [p for p in row_prices if p > 10]
+                            lowest_val = min(valid_lows) if valid_lows else None
+
+                            # Pass 2: Apply colors
+                            for col_idx in price_col_indices:
+                                cell = worksheet.cell(row=excel_row, column=col_idx)
+                                val = cell.value
+                                
+                                if isinstance(val, (int, float)):
+                                    # Apply RED (Highest)
+                                    if val == highest_val:
+                                        cell.fill = red_fill
+                                    
+                                    # Apply GREEN (Lowest > 10)
+                                    # Note: If a number is BOTH highest and lowest (only 1 price), it becomes Green.
+                                    if lowest_val is not None and val == lowest_val:
+                                        cell.fill = green_fill
+
+                # Download Button
                 timestamp = datetime.now().strftime("%m-%d_%H-%M")
                 file_name = f"prices_{timestamp}.xlsx"
                 
@@ -312,6 +382,3 @@ def main():
                 st.dataframe(final_df)
             else:
                 st.warning("No data found.")
-
-if __name__ == "__main__":
-    main()
