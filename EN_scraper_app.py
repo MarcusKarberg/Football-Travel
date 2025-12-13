@@ -17,9 +17,8 @@ import streamlit as st
 from datetime import datetime
 import io
 from openpyxl.styles import Border, Side, PatternFill
-import requests  # <--- NEW IMPORT FOR SPEED
 from openpyxl.utils import get_column_letter
-
+import requests
 
 # --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
 try:
@@ -52,7 +51,7 @@ def get_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-notifications")
     
-    # SPEED FIX: Don't wait for full page load (images, ads), just HTML
+    # SPEED FIX: Don't wait for full page load
     chrome_options.page_load_strategy = 'eager' 
     
     # Check if running on Streamlit Cloud (Linux) to find Chromium
@@ -102,19 +101,13 @@ def get_club_names():
 # --- 3. FETCH URLS (FAST VERSION) ---
 @st.cache_resource
 def fetch_website_urls():
-    """
-    Uses 'requests' instead of Selenium. 
-    This is 20x faster because it doesn't launch a browser.
-    """
     website_data_lower = {}
     try:
-        # Fake a browser user-agent to avoid getting blocked
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         response = requests.get(URL, headers=headers, timeout=10)
         
-        # If response is successful, parse the HTML
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             section = soup.find(id="klubber")
@@ -235,7 +228,6 @@ def main():
         st.divider()
         st.write(f"### Search prices for {len(selected_list)} clubs")
         
-        # Hardcoded to 5 browsers for speed
         workers = 5
         
         if st.button("Search for prices", type="primary"):
@@ -295,8 +287,6 @@ def main():
                 ordered_clubs = final_df['Club'].tolist()
                 final_df = final_df.drop(columns=['Club'])
 
-                # Excel Formatting
-                output = io.BytesIO()
                 # Excel Formatting
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -364,7 +354,6 @@ def main():
                                         cell.fill = red_fill
                                     
                                     # Apply GREEN (Lowest > 10)
-                                    # Note: If a number is BOTH highest and lowest (only 1 price), it becomes Green.
                                     if lowest_val is not None and val == lowest_val:
                                         cell.fill = green_fill
 
@@ -382,3 +371,6 @@ def main():
                 st.dataframe(final_df)
             else:
                 st.warning("No data found.")
+
+if __name__ == "__main__":
+    main()
