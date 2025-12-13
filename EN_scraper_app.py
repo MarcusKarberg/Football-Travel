@@ -16,7 +16,7 @@ import concurrent.futures
 import streamlit as st
 from datetime import datetime
 import io
-from openpyxl.styles import Border, Side, PatternFill
+from openpyxl.styles import Border, Side, PatternFill, Font
 from openpyxl.utils import get_column_letter
 import requests
 
@@ -289,48 +289,55 @@ def main():
 
                 # Excel Formatting
                 output = io.BytesIO()
+                # Excel Formatting
+                output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    final_df.to_excel(writer, sheet_name='Prices')
+                    # 1. Write Data starting at Row 3 (leaving space for title)
+                    final_df.to_excel(writer, sheet_name='Prices', startrow=2)
+                    
                     workbook = writer.book
                     worksheet = writer.sheets['Prices']
                     
-                    # 1. Manually set width for Column A (Match Name)
+                    # 2. Add and Format Title at A1
+                    worksheet['A1'] = "GGGG"
+                    worksheet['A1'].font = Font(size=16, bold=True)
+                    
+                    # 3. Manually set width for Column A
                     worksheet.column_dimensions['A'].width = 25
                     
-                    # 2. Define Styles
+                    # 4. Define Styles
                     thick_border = Border(top=Side(style='medium'))
-                    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") # Light Green
-                    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")   # Light Red
+                    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 
-                    # 3. Identify Price Columns (so we don't color "Nights" columns)
+                    # 5. Identify Price Columns
                     price_col_indices = []
-                    for i, col_name in enumerate(final_df.columns, start=2): # start=2 because col 1 is Index
+                    # start=2 because col 1 is Index.
+                    for i, col_name in enumerate(final_df.columns, start=2): 
                         col_letter = get_column_letter(i)
                         
                         # Auto-fit width
                         worksheet.column_dimensions[col_letter].width = len(str(col_name)) + 3
                         
-                        # Check if it is a Price column (assumes 'nætter' is in the nights column header)
                         if "nætter" not in str(col_name).lower():
                             price_col_indices.append(i)
 
-                    # 4. Loop Rows for Borders AND Colors
+                    # 6. Loop Rows for Borders AND Colors
                     previous_club = ordered_clubs[0]
                     
-                    # Enumerate gives us (0, clubname), (1, clubname)...
                     for i, club_name in enumerate(ordered_clubs):
-                        excel_row = i + 2  # Data starts at Excel Row 2
+                        # --- ROW CALCULATION UPDATE ---
+                        # Table Header is Row 3. Data starts at Row 4.
+                        # i=0 is the 1st data row. So 0 + 4 = Row 4.
+                        excel_row = i + 4  
                         
                         # --- BORDER LOGIC ---
-                        # Skip the very first row (i=0), then check if club changed
                         if i > 0 and club_name != ordered_clubs[i-1]:
                             for cell in worksheet[excel_row]:
                                 cell.border = thick_border
                         
-                        # --- COLOR LOGIC (High/Low) ---
+                        # --- COLOR LOGIC ---
                         row_prices = []
-                        
-                        # Pass 1: Collect all numeric prices in this row
                         for col_idx in price_col_indices:
                             cell_val = worksheet.cell(row=excel_row, column=col_idx).value
                             if isinstance(cell_val, (int, float)):
@@ -338,22 +345,16 @@ def main():
                         
                         if row_prices:
                             highest_val = max(row_prices)
-                            
-                            # Find lowest value strictly greater than 10
                             valid_lows = [p for p in row_prices if p > 10]
                             lowest_val = min(valid_lows) if valid_lows else None
 
-                            # Pass 2: Apply colors
                             for col_idx in price_col_indices:
                                 cell = worksheet.cell(row=excel_row, column=col_idx)
                                 val = cell.value
                                 
                                 if isinstance(val, (int, float)):
-                                    # Apply RED (Highest)
                                     if val == highest_val:
                                         cell.fill = red_fill
-                                    
-                                    # Apply GREEN (Lowest > 10)
                                     if lowest_val is not None and val == lowest_val:
                                         cell.fill = green_fill
 

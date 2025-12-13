@@ -18,6 +18,6 @@ club_alias = {
 }
 
 suffix_pattern = re.compile(
-        r"\b(?:fc|as|bk|rcd|ac|bc|ss|us|ogc|losc|afc|krc|sc|rb|cf|ik)\b\.?",
+        r"\b(?:fc|FC|Fc|as|bk|rcd|ac|bc|ss|us|ogc|losc|afc|krc|sc|rb|cf|ik)\b\.?",
         re.IGNORECASE,
     )
