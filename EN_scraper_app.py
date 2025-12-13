@@ -16,21 +16,16 @@ import concurrent.futures
 import streamlit as st
 from datetime import datetime
 
-# --- SETUP: Handle Paths for Cloud vs Local ---
-# We force the script to look in the SAME directory for files, not the parent.
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
-
-# Try importing Alias, but don't crash if missing (helps with debugging)
+# --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
 try:
     from Alias import club_alias, suffix_pattern
 except ImportError:
-    st.warning("⚠️ 'Alias.py' not found in the same folder. Aliases will be ignored.")
-    club_alias = {}
-    suffix_pattern = re.compile(r"")
+    st.error("❌ Critical Error: 'Alias.py' was not found in the same folder as this script.")
+    st.stop()
 
 URL = "https://www.fodboldrejseguiden.dk/fodboldrejser-england/"
 
+# --- STREAMLIT CONFIG ---
 st.set_page_config(page_title="Football Scraper", layout="wide")
 st.markdown("""
 <style>
@@ -42,7 +37,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. CLOUD-READY DRIVER SETUP ---
+# --- 1. SETUP CHROME DRIVER (Cloud Compatible) ---
 def get_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless=new") 
@@ -80,17 +75,19 @@ def scroll_slowly(driver):
         if new_height == last_height: break
         last_height = new_height
 
+# --- 2. LOAD DATA (Assumes club_names.xlsx is in the same folder) ---
 @st.cache_resource
 def get_club_names():
-    # FIX: Look in current_dir, NOT parent_dir
-    excel_path = os.path.join(current_dir, "club_names.xlsx")
+    # We look for the file in the current working directory
+    excel_filename = "club_names.xlsx"
     
-    if not os.path.exists(excel_path):
-        st.error(f"❌ Could not find file: {excel_path}")
+    if not os.path.exists(excel_filename):
+        st.error(f"❌ File not found: {excel_filename}")
         return []
         
     try:
-        df_clubs = pd.read_excel(excel_path, sheet_name="EN", usecols="A", header=None)
+        # Load the EN sheet
+        df_clubs = pd.read_excel(excel_filename, sheet_name="EN", usecols="A", header=None)
         return df_clubs[0].dropna().astype(str).str.strip().tolist()
     except Exception as e:
         st.error(f"Error reading Excel: {e}")
@@ -118,6 +115,7 @@ def fetch_website_urls():
         setup_driver.quit()
     return website_data_lower
 
+# --- 3. SCRAPER WORKER ---
 def scrape_specific_club(club_info):
     excel_name, club_url = club_info
     local_data = [] 
@@ -168,7 +166,7 @@ def scrape_specific_club(club_info):
                     for group in package_groups:
                         try:
                             header = group.find_element(By.CSS_SELECTOR, "span.pack").get_attribute("innerText").strip().lower()
-                            if "fly" not in header or "hotel" not in header: continue
+                            if "fly" in header or "hotel" not n bnm in header: continue
                             
                             for row in group.find_elements(By.CSS_SELECTOR, "tbody tr"):
                                 try:
@@ -192,13 +190,13 @@ def scrape_specific_club(club_info):
         driver.quit()
     return local_data
 
-# --- MAIN APP ---
+# --- 4. MAIN INTERFACE ---
 def main():
-    st.title("⚽ Premier League Scraper Dashboard")
+    st.title("⚽ Prices: Ticket + Hotel")
     
     excel_clubs = get_club_names()
     if not excel_clubs:
-        st.stop() # Stop if no clubs found
+        st.stop() 
 
     if "selected_clubs" not in st.session_state:
         st.session_state.selected_clubs = set()
@@ -220,9 +218,10 @@ def main():
     if selected_list:
         st.divider()
         st.write(f"### Ready to scrape {len(selected_list)} clubs")
-        workers = st.slider("Browsers", 1, 6, 4)
         
-        if st.button("🚀 Start Scraping", type="primary"):
+        workers = 5
+        
+        if st.button("Search for prices", type="primary"):
             tasks = []
             status = st.empty()
             bar = st.progress(0)
@@ -251,15 +250,17 @@ def main():
             if all_data:
                 df = pd.DataFrame(all_data).drop_duplicates(subset=['Match', 'Provider'])
                 df['Date'] = pd.to_datetime(df['Date'])
-                # Pivot
+                
+                # Pivot and organize columns
                 df_pivot = df.pivot(index='Match', columns='Provider', values=['Price', 'Nights'])
                 final_df = pd.DataFrame(index=df_pivot.index)
+                
                 for prov in sorted(df['Provider'].unique()):
                     if prov in df_pivot['Price']: final_df[prov] = df_pivot['Price'][prov]
                     if prov in df_pivot['Nights']: final_df[f"{prov} nætter"] = df_pivot['Nights'][prov]
                 
                 st.dataframe(final_df)
-                st.download_button("📥 Download CSV", final_df.to_csv().encode('utf-8-sig'), "EN_prices.csv", "text/csv")
+                st.download_button("📥 Download CSV", final_df.to_csv().encode('utf-8-sig'), "competitor_prices.csv", "text/csv")
             else:
                 st.warning("No data found.")
 
