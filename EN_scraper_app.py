@@ -210,8 +210,8 @@ def main():
     if "selected_clubs" not in st.session_state:
         st.session_state.selected_clubs = set()
 
-    with st.spinner("Fetching URLs..."):
-        website_data_lower = fetch_website_urls()
+    # --- REMOVED: fetch_website_urls() call from here --- 
+    # This ensures the UI renders immediately.
 
     st.subheader("Select Clubs")
     cols = st.columns(4)
@@ -231,15 +231,21 @@ def main():
         workers = 5
         
         if st.button("Search for prices", type="primary"):
+            # --- MOVED: Fetch URLs here ---
+            # We only fetch when the user is ready to search.
+            with st.spinner("Fetching website links..."):
+                website_data_lower = fetch_website_urls()
+            
             st.toast("🚀 Scraper started! Please wait...", icon="🤖")
             status = st.empty()
-            status.info("⏳ Initializing browsers... (Takes ~15-20s)")
+            status.info("⏳ Initializing browsers... (Takes 25-30s)")
             bar = st.progress(0)
 
             tasks = []
             
             for name in selected_list:
                 clean_name = clean(name)
+                # Ensure website_data_lower is available here
                 url = website_data_lower.get(clean_name)
                 if not url and name in club_alias:
                     for a in club_alias[name]:
