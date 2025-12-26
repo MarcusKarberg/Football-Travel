@@ -19,8 +19,9 @@ import io
 from openpyxl.styles import Border, Side, PatternFill, Font
 from openpyxl.utils import get_column_letter
 import requests
+import math
 
-# --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
+
 try:
     from Alias import club_alias, suffix_pattern
 except ImportError:
@@ -41,7 +42,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. SETUP CHROME DRIVER (OPTIMIZED) ---
+# --- 1. SETUP CHROME DRIVER ---
 def get_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless=new") 
@@ -50,8 +51,6 @@ def get_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-notifications")
-    
-    # SPEED FIX: Don't wait for full page load
     chrome_options.page_load_strategy = 'eager' 
     
     # Check if running on Streamlit Cloud (Linux) to find Chromium
@@ -98,7 +97,7 @@ def get_club_names():
         st.error(f"Error reading Excel: {e}")
         return []
 
-# --- 3. FETCH URLS (FAST VERSION) ---
+# --- 3. FETCH URLS ---
 @st.cache_resource
 def fetch_website_urls():
     website_data_lower = {}
@@ -123,13 +122,18 @@ def fetch_website_urls():
     
     return website_data_lower
 
-# --- 4. SCRAPER WORKER ---
-def scrape_specific_club(club_info):
+# --- 4. CORE SCRAPING LOGIC (Single URL) ---
+def scrape_single_url(driver, club_info):
+    """
+    Scrapes a single club using an EXISTING driver instance.
+    Does NOT open or close the browser.
+    """
     excel_name, club_url = club_info
     local_data = [] 
-    driver = get_driver()
+    
     try:
         driver.get(club_url)
+        
         # Cookie Banner
         for _ in range(3):
             try:
@@ -195,11 +199,28 @@ def scrape_specific_club(club_info):
                         except: continue
                 except: continue
         except Exception: pass
-    finally:
-        driver.quit()
+    except Exception as e:
+        print(f"Error processing {excel_name}: {e}")
+        
     return local_data
 
-# --- 5. MAIN INTERFACE ---
+# --- 5. WORKER BATCH FUNCTION ---
+def worker_batch_task(tasks_subset):
+    """
+    Opens ONE browser, scrapes MULTIPLE clubs, then closes browser.
+    """
+    driver = get_driver()
+    batch_results = []
+    try:
+        for task in tasks_subset:
+            # task is tuple: (club_name, club_url)
+            data = scrape_single_url(driver, task)
+            batch_results.extend(data)
+    finally:
+        driver.quit()
+    return batch_results
+
+# --- 6. MAIN INTERFACE ---
 def main():
     st.title("⚽ Prices: Ticket + Hotel")
     
@@ -210,8 +231,7 @@ def main():
     if "selected_clubs" not in st.session_state:
         st.session_state.selected_clubs = set()
 
-    # --- REMOVED: fetch_website_urls() call from here --- 
-    # This ensures the UI renders immediately.
+    # NOTE: We do NOT fetch URLs here anymore to speed up startup.
 
     st.subheader("Select Clubs")
     cols = st.columns(4)
@@ -231,21 +251,19 @@ def main():
         workers = 5
         
         if st.button("Search for prices", type="primary"):
-            # --- MOVED: Fetch URLs here ---
-            # We only fetch when the user is ready to search.
+            # 1. Fetch URLs NOW (Lazy Loading)
             with st.spinner("Fetching website links..."):
                 website_data_lower = fetch_website_urls()
             
             st.toast("🚀 Scraper started! Please wait...", icon="🤖")
             status = st.empty()
-            status.info("⏳ Initializing browsers... (Takes 25-30s)")
+            status.info("⏳ Initializing browsers...")
             bar = st.progress(0)
 
+            # 2. Prepare Tasks
             tasks = []
-            
             for name in selected_list:
                 clean_name = clean(name)
-                # Ensure website_data_lower is available here
                 url = website_data_lower.get(clean_name)
                 if not url and name in club_alias:
                     for a in club_alias[name]:
@@ -254,16 +272,31 @@ def main():
                             break
                 if url: tasks.append((name, url))
             
+            if not tasks:
+                st.warning("Could not find URLs for the selected clubs.")
+                st.stop()
+
+            # 3. Batch Tasks (Chunking)
+            # Split list of tasks into N chunks, where N = workers
+            # ensuring we don't spawn more workers than tasks
+            num_chunks = min(len(tasks), workers)
+            # Create chunks using list slicing
+            chunk_size = math.ceil(len(tasks) / num_chunks)
+            task_chunks = [tasks[i:i + chunk_size] for i in range(0, len(tasks), chunk_size)]
+
             all_data = []
             done = 0
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-                futures = {ex.submit(scrape_specific_club, t): t[0] for t in tasks}
+            
+            # 4. Execute Batches
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_chunks) as ex:
+                futures = {ex.submit(worker_batch_task, chunk): chunk for chunk in task_chunks}
+                
                 for f in concurrent.futures.as_completed(futures):
                     res = f.result()
                     all_data.extend(res)
                     done += 1
-                    bar.progress(done / len(tasks))
-                    status.write(f"✅ Processed {futures[f]} ({len(res)} deals)")
+                    bar.progress(done / num_chunks)
+                    status.write(f"✅ Batch {done}/{num_chunks} complete ({len(res)} deals found)")
             
             if all_data:
                 # Process data
@@ -295,16 +328,14 @@ def main():
 
                 # Excel Formatting
                 output = io.BytesIO()
-                # Excel Formatting
-                output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    # 1. Write Data starting at Row 3 (leaving space for title)
+                    # 1. Write Data starting at Row 3
                     final_df.to_excel(writer, sheet_name='Prices', startrow=2)
                     
                     workbook = writer.book
                     worksheet = writer.sheets['Prices']
                     
-                    # 2. Add and Format Title at A1
+                    # 2. Add and Format Title
                     worksheet['A1'] = "Prices for ticket + hotel"
                     worksheet['A1'].font = Font(size=16, bold=True)
                     
@@ -318,13 +349,9 @@ def main():
 
                     # 5. Identify Price Columns
                     price_col_indices = []
-                    # start=2 because col 1 is Index.
                     for i, col_name in enumerate(final_df.columns, start=2): 
                         col_letter = get_column_letter(i)
-                        
-                        # Auto-fit width
                         worksheet.column_dimensions[col_letter].width = len(str(col_name)) + 3
-                        
                         if "nætter" not in str(col_name).lower():
                             price_col_indices.append(i)
 
@@ -332,9 +359,6 @@ def main():
                     previous_club = ordered_clubs[0]
                     
                     for i, club_name in enumerate(ordered_clubs):
-                        # --- ROW CALCULATION UPDATE ---
-                        # Table Header is Row 3. Data starts at Row 4.
-                        # i=0 is the 1st data row. So 0 + 4 = Row 4.
                         excel_row = i + 4  
                         
                         # --- BORDER LOGIC ---
