@@ -19,9 +19,8 @@ import io
 from openpyxl.styles import Border, Side, PatternFill, Font
 from openpyxl.utils import get_column_letter
 import requests
-import math
 
-
+# --- IMPORT ALIAS (Assumes Alias.py is in the same folder) ---
 try:
     from Alias import club_alias, suffix_pattern
 except ImportError:
@@ -42,7 +41,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. SETUP CHROME DRIVER ---
+# --- 1. SETUP CHROME DRIVER (OPTIMIZED) ---
 def get_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless=new") 
@@ -51,6 +50,8 @@ def get_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-notifications")
+    
+    # SPEED FIX: Don't wait for full page load
     chrome_options.page_load_strategy = 'eager' 
     
     # Check if running on Streamlit Cloud (Linux) to find Chromium
@@ -97,7 +98,7 @@ def get_club_names():
         st.error(f"Error reading Excel: {e}")
         return []
 
-# --- 3. FETCH URLS ---
+# --- 3. FETCH URLS (FAST VERSION) ---
 @st.cache_resource
 def fetch_website_urls():
     website_data_lower = {}
@@ -122,18 +123,13 @@ def fetch_website_urls():
     
     return website_data_lower
 
-# --- 4. CORE SCRAPING LOGIC (Single URL) ---
-def scrape_single_url(driver, club_info):
-    """
-    Scrapes a single club using an EXISTING driver instance.
-    Does NOT open or close the browser.
-    """
+# --- 4. SCRAPER WORKER ---
+def scrape_specific_club(club_info):
     excel_name, club_url = club_info
     local_data = [] 
-    
+    driver = get_driver()
     try:
         driver.get(club_url)
-        
         # Cookie Banner
         for _ in range(3):
             try:
@@ -199,209 +195,46 @@ def scrape_single_url(driver, club_info):
                         except: continue
                 except: continue
         except Exception: pass
-    except Exception as e:
-        print(f"Error processing {excel_name}: {e}")
-        
-    return local_data
-
-# --- 5. WORKER BATCH FUNCTION ---
-def worker_batch_task(tasks_subset):
-    """
-    Opens ONE browser, scrapes MULTIPLE clubs, then closes browser.
-    """
-    driver = get_driver()
-    batch_results = []
-    try:
-        for task in tasks_subset:
-            # task is tuple: (club_name, club_url)
-            data = scrape_single_url(driver, task)
-            batch_results.extend(data)
     finally:
         driver.quit()
-    return batch_results
+    return local_data
 
-# --- 6. MAIN INTERFACE ---
+# --- 5. MAIN INTERFACE ---
 def main():
-    st.title("⚽ Prices: Ticket + Hotel")
+    st.title("⏱️ Speed Diagnostic")
     
-    excel_clubs = get_club_names()
-    if not excel_clubs:
-        st.stop() 
-
-    if "selected_clubs" not in st.session_state:
-        st.session_state.selected_clubs = set()
-
-    # NOTE: We do NOT fetch URLs here anymore to speed up startup.
-
-    st.subheader("Select Clubs")
-    cols = st.columns(4)
-    for i, club in enumerate(excel_clubs):
-        col = cols[i % 4]
-        is_sel = club in st.session_state.selected_clubs
-        if col.button(club, key=club, type="primary" if is_sel else "secondary", use_container_width=True):
-            if is_sel: st.session_state.selected_clubs.remove(club)
-            else: st.session_state.selected_clubs.add(club)
-            st.rerun()
-
-    selected_list = list(st.session_state.selected_clubs)
-    if selected_list:
-        st.divider()
-        st.write(f"### Search prices for {len(selected_list)} clubs")
+    if st.button("Run Speed Test", type="primary"):
+        st.write("### 🕵️‍♂️ diagnosing the 30-second delay...")
         
-        workers = 5
-        
-        if st.button("Search for prices", type="primary"):
-            # 1. Fetch URLs NOW (Lazy Loading)
-            with st.spinner("Fetching website links..."):
-                website_data_lower = fetch_website_urls()
+        # --- TEST 1: The Website Connection ---
+        st.write("1️⃣ Testing connection to 'fodboldrejseguiden.dk'...")
+        start_net = time.time()
+        try:
+            # We simulate the exact request from fetch_website_urls
+            headers = {"User-Agent": "Mozilla/5.0"}
+            r = requests.get("https://www.fodboldrejseguiden.dk/fodboldrejser-england/", headers=headers, timeout=35)
+            elapsed_net = round(time.time() - start_net, 2)
             
-            st.toast("🚀 Scraper started! Please wait...", icon="🤖")
-            status = st.empty()
-            status.info("⏳ Initializing browsers...")
-            bar = st.progress(0)
-
-            # 2. Prepare Tasks
-            tasks = []
-            for name in selected_list:
-                clean_name = clean(name)
-                url = website_data_lower.get(clean_name)
-                if not url and name in club_alias:
-                    for a in club_alias[name]:
-                        if clean(a) in website_data_lower:
-                            url = website_data_lower[clean(a)]
-                            break
-                if url: tasks.append((name, url))
-            
-            if not tasks:
-                st.warning("Could not find URLs for the selected clubs.")
-                st.stop()
-
-            # 3. Batch Tasks (Chunking)
-            # Split list of tasks into N chunks, where N = workers
-            # ensuring we don't spawn more workers than tasks
-            num_chunks = min(len(tasks), workers)
-            # Create chunks using list slicing
-            chunk_size = math.ceil(len(tasks) / num_chunks)
-            task_chunks = [tasks[i:i + chunk_size] for i in range(0, len(tasks), chunk_size)]
-
-            all_data = []
-            done = 0
-            
-            # 4. Execute Batches
-            with concurrent.futures.ThreadPoolExecutor(max_workers=num_chunks) as ex:
-                futures = {ex.submit(worker_batch_task, chunk): chunk for chunk in task_chunks}
-                
-                for f in concurrent.futures.as_completed(futures):
-                    res = f.result()
-                    all_data.extend(res)
-                    done += 1
-                    bar.progress(done / num_chunks)
-                    status.write(f"✅ Batch {done}/{num_chunks} complete ({len(res)} deals found)")
-            
-            if all_data:
-                # Process data
-                df = pd.DataFrame(all_data).drop_duplicates(subset=['Match', 'Provider'])
-                df['Date'] = pd.to_datetime(df['Date'])
-                
-                # Convert to numbers
-                df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
-                df['Nights'] = pd.to_numeric(df['Nights'], errors='coerce')
-                
-                # Pivot
-                df_pivot = df.pivot(index='Match', columns='Provider', values=['Price', 'Nights'])
-                final_df = pd.DataFrame(index=df_pivot.index)
-                
-                # Map Club names
-                match_to_club = df.set_index('Match')['Club'].to_dict()
-                final_df.insert(0, 'Club', final_df.index.map(match_to_club))
-                
-                for prov in sorted(df['Provider'].unique()):
-                    if prov in df_pivot['Price']: final_df[prov] = df_pivot['Price'][prov]
-                    if prov in df_pivot['Nights']: final_df[f"{prov} nætter"] = df_pivot['Nights'][prov]
-
-                # Sort by Club
-                final_df = final_df.sort_values(by=['Club'])
-
-                # Save list & Drop Column
-                ordered_clubs = final_df['Club'].tolist()
-                final_df = final_df.drop(columns=['Club'])
-
-                # Excel Formatting
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    # 1. Write Data starting at Row 3
-                    final_df.to_excel(writer, sheet_name='Prices', startrow=2)
-                    
-                    workbook = writer.book
-                    worksheet = writer.sheets['Prices']
-                    
-                    # 2. Add and Format Title
-                    worksheet['A1'] = "Prices for ticket + hotel"
-                    worksheet['A1'].font = Font(size=16, bold=True)
-                    
-                    # 3. Manually set width for Column A
-                    worksheet.column_dimensions['A'].width = 25
-                    
-                    # 4. Define Styles
-                    thick_border = Border(top=Side(style='medium'))
-                    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-                    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-
-                    # 5. Identify Price Columns
-                    price_col_indices = []
-                    for i, col_name in enumerate(final_df.columns, start=2): 
-                        col_letter = get_column_letter(i)
-                        worksheet.column_dimensions[col_letter].width = len(str(col_name)) + 3
-                        if "nætter" not in str(col_name).lower():
-                            price_col_indices.append(i)
-
-                    # 6. Loop Rows for Borders AND Colors
-                    previous_club = ordered_clubs[0]
-                    
-                    for i, club_name in enumerate(ordered_clubs):
-                        excel_row = i + 4  
-                        
-                        # --- BORDER LOGIC ---
-                        if i > 0 and club_name != ordered_clubs[i-1]:
-                            for cell in worksheet[excel_row]:
-                                cell.border = thick_border
-                        
-                        # --- COLOR LOGIC ---
-                        row_prices = []
-                        for col_idx in price_col_indices:
-                            cell_val = worksheet.cell(row=excel_row, column=col_idx).value
-                            if isinstance(cell_val, (int, float)):
-                                row_prices.append(cell_val)
-                        
-                        if row_prices:
-                            highest_val = max(row_prices)
-                            valid_lows = [p for p in row_prices if p > 10]
-                            lowest_val = min(valid_lows) if valid_lows else None
-
-                            for col_idx in price_col_indices:
-                                cell = worksheet.cell(row=excel_row, column=col_idx)
-                                val = cell.value
-                                
-                                if isinstance(val, (int, float)):
-                                    if val == highest_val:
-                                        cell.fill = red_fill
-                                    if lowest_val is not None and val == lowest_val:
-                                        cell.fill = green_fill
-
-                # Download Button
-                timestamp = datetime.now().strftime("%m-%d_%H-%M")
-                file_name = f"prices_{timestamp}.xlsx"
-                
-                st.download_button(
-                    label="📥 Download Excel Report",
-                    data=output.getvalue(),
-                    file_name=file_name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-                st.dataframe(final_df)
+            if elapsed_net > 5:
+                st.error(f"❌ SLOW: Website took {elapsed_net} seconds to respond.")
             else:
-                st.warning("No data found.")
+                st.success(f"✅ FAST: Website responded in {elapsed_net} seconds.")
+        except Exception as e:
+            st.error(f"❌ FAILED: Website connection error: {e}")
 
-if __name__ == "__main__":
-    main()
+        # --- TEST 2: The Browser Startup ---
+        st.write("2️⃣ Testing Chrome Driver startup...")
+        start_driver = time.time()
+        try:
+            # This is the exact line that launches the browser
+            driver = get_driver()
+            elapsed_driver = round(time.time() - start_driver, 2)
+            driver.quit()
+            
+            if elapsed_driver > 5:
+                st.error(f"❌ SLOW: Chrome Driver took {elapsed_driver} seconds to launch.")
+                st.info("💡 Fix: This usually means Selenium is trying to download updates and timing out.")
+            else:
+                st.success(f"✅ FAST: Chrome Driver launched in {elapsed_driver} seconds.")
+        except Exception as e:
+            st.error(f"❌ FAILED: Driver error: {e}")
