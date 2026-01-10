@@ -19,6 +19,7 @@ URL_TEMPLATE = "https://olka.dk/event/soccer/{date}-{home}-{away}/"
 
 # Mapping for URL slugs (specific to Olka's URL structure)
 TEAM_MAPPING = {
+    #English
     "Bournemouth": "bournemouth",
     "Aston Villa": "aston-villa",
     "Leeds": "leeds-united",
@@ -32,13 +33,17 @@ TEAM_MAPPING = {
     "Liverpool FC": "liverpool-fc",
     "Liverpool": "liverpool-fc",
     "Manchester United": "manchester-united",
+    "Newcastle": "newcastle-united",
     "Nottingham Forest": "nottingham-forest",
     "Sunderland": "sunderland",
     "West Ham": "west-ham",
     "Wolverhampton": "wolves",
-    "Wolves": "wolves",
     "Tottemnham": "tottenham",
-    "Tottenham": "tottenham",
+    # Spanish
+    "FC Barcelona": "fc-barcelona",
+    "Atlético Madrid": "atltico-madrid",
+    "Real Madrid": "real-madrid",
+    # Other
     "FC Kairat": "kairat-almaty",
     "Qarabag FK": "qarabag",
 }
@@ -162,14 +167,14 @@ def scrape_prices(df_matches):
             print(f"[{index + 1}/{total}] Checking: {row['Match']}")
             
             # --- HUMAN DELAY START ---
-            sleep_time = random.uniform(1.2, 2.5)
+            sleep_time = random.uniform(0.7, 1.3)
             print(f"   ...waiting {sleep_time:.2f}s to act human...")
             time.sleep(sleep_time) 
             # -------------------------
 
             try:
                 page.goto(url, timeout=60000)
-                time.sleep(random.uniform(0.7, 1.2))
+                time.sleep(random.uniform(0.5, 0.9))
 
                 try:
                     cookie_knap = page.get_by_role("button", name=re.compile("Godkend|Allow all|Accepter", re.IGNORECASE))
@@ -233,7 +238,7 @@ if __name__ == "__main__":
     # Test Input
     my_clubs = [
         "Liverpool", 
-        "Manchester United"
+        "Arsenal"
     ]
     
     result = get_prices(my_clubs)

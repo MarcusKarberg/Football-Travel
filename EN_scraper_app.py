@@ -62,10 +62,22 @@ def main():
                     # --- START TIMER ---
             start_time = time.time()  # <--- Added this to capture start time
             
+            P_FT = 60   # Hurtig (CSV)
+            P_OLKA = 450 # Langsom (Browser)
+            P_FRG = 300  # Langsom (Browser)
+            
+            total_points = P_FT + P_OLKA + P_FRG
+            current_points = 0
+            
+            # 2. OPRET PROGRESS BAR
+            progress_bar = st.progress(0, text="Starter søgning...")
+            current_points += P_FT
+            progress_bar.progress(current_points / total_points)
+
             status = st.status("Arbejder...", expanded=True)
             
             # --- 1. Hent fra FootballTravel (CSV) ---
-            status.write("📥 Henter data fra Footballtravel.dk (CSV)...")
+            status.write("🤓Data fra Footballtravel")
             try:
                 df1 = Footballtravel.get_prices(selected)
                 if not df1.empty:
@@ -74,9 +86,12 @@ def main():
             except Exception as e:
                 st.error(f"Fejl i Footballtravel: {e}")
                 df1 = pd.DataFrame()
+
+            current_points += P_FT
+            progress_bar.progress(current_points / total_points, text="Footballtravel færdig. Starter Olka...")
             
             # --- 2. Hent fra Olka (Selenium/Playwright) ---
-            status.write("🌐 Scraper Olka (Browser)...")
+            status.write("🌐 Data fra Olka")
             try:
                 df2 = Olka.get_prices(selected)
                 if not df2.empty:
@@ -86,15 +101,21 @@ def main():
             except Exception as e:
                 st.error(f"Fejl i OLKA: {e}")
                 df2 = pd.DataFrame()
+            
+            current_points += P_OLKA
+            progress_bar.progress(current_points / total_points, text="Olka færdig. Starter resterende...")
 
             # --- 3. Hent fra Fodboldrejseguiden (Selenium) ---
-            status.write("🌐 Scraper Fodboldrejseguiden.dk (Browser)...")
+            status.write("👽 Data fra de resterende")
             try:
                 df5 = Fodboldrejseguiden.get_prices(selected)
                 st.toast(f"Fodboldrejseguiden: {len(df5)} tilbud fundet", icon="✅")
             except Exception as e:
                 st.error(f"Fejl i Fodboldrejseguiden: {e}")
                 df5 = pd.DataFrame()
+            
+            current_points += P_FRG
+            progress_bar.progress(1.0, text="Færdig!")
 
                     # --- STOP TIMER ---
             end_time = time.time()               # <--- Capture end time

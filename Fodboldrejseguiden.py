@@ -150,7 +150,7 @@ def scrape_specific_club(args):
                                     # Vi bruger .lower() og fjerner mellemrum for at fange "Football Travel", "footballtravel" osv.
                                     prov_check = provider_text.lower().replace(" ", "")
                                     
-                                    if "footballtravel" in prov_check:
+                                    if "footballtravel" in prov_check or "olka" in prov_check:
                                         # Vi ignorerer denne række, da den er hentet via CSV
                                         continue 
                                     # ---------------------------------------------
