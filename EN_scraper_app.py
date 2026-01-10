@@ -3,12 +3,18 @@ import pandas as pd
 import io
 import os
 import time
+import subprocess
+import sys
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
+subprocess.run(["playwright", "install", "chromium"])
 from datetime import datetime, timedelta
 from openpyxl.styles import Border, Side, PatternFill, Font
 from openpyxl.utils import get_column_letter
 
 # --- IMPORTER VORES MODULER ---
-# Sørg for at filnavnene matcher præcis (store/små bogstaver)
 import Footballtravel    
 import Olka  
 import Fodboldrejseguiden  
