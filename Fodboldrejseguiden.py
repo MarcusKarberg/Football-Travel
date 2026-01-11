@@ -73,24 +73,6 @@ def scroll_slowly(driver):
             last_height = new_height
             retries = 0
 
-# --- 2. FETCH URLS ---
-@st.cache_resource(ttl=3600)
-def fetch_website_urls():
-    website_data_lower = {}
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(URL, headers=headers, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            section = soup.find(id="klubber")
-            if section:
-                for link in section.find_all('a'):
-                    clean_name = clean(link.get_text(strip=True))
-                    website_data_lower[clean_name] = urljoin(URL, link.get('href', ''))
-    except Exception as e:
-        print(f"Fejl ved URL hentning: {e}")
-    return website_data_lower
-
 # --- 3. SCRAPER WORKER ---
 def scrape_specific_club(args):
     club_name, club_url = args
@@ -100,17 +82,22 @@ def scrape_specific_club(args):
     try:
         driver.get(club_url)
         
+        # 1. Cookies
         try:
             cookie_btn = WebDriverWait(driver, 3).until(
                 EC.element_to_be_clickable((By.ID, 'onetrust-accept-btn-handler'))
             )
             cookie_btn.click()
+            time.sleep(1) 
         except: pass
 
+        # 2. Find kampe
         try:
             WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CLASS_NAME, "match")))
+            
             scroll_slowly(driver)
-            driver.execute_script("window.scrollTo(0, 0);")
+            driver.execute_script("window.scrollTo(0, 100);")
+            time.sleep(1.5)
             
             matches = driver.find_elements(By.CLASS_NAME, "match")
             
@@ -124,47 +111,78 @@ def scrape_specific_club(args):
                         match_title = title_elem.text.split("fra kr")[0].strip()
                     except: match_title = "Unknown Match"
 
+                    # 3. Åbn boksen
                     try:
                         toggle_btn = match.find_element(By.CSS_SELECTOR, ".togglemodule .koebsknap.toggle")
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", toggle_btn)
+                        time.sleep(0.2)
                         driver.execute_script("arguments[0].click();", toggle_btn)
-                        time.sleep(0.5)
-                    except: pass
+                        time.sleep(0.5) 
+                    except: 
+                        try:
+                            time.sleep(0.5)
+                            driver.execute_script("arguments[0].click();", toggle_btn)
+                            time.sleep(0.5)
+                        except: pass
                     
+                    # 4. Gennemgå pakke-tabellerne
                     package_groups = match.find_elements(By.CSS_SELECTOR, ".packageholder .table-outer")
                     
                     for group in package_groups:
                         try:
-                            header = group.find_element(By.CSS_SELECTOR, "span.pack").get_attribute("innerText").strip().lower()
+                            # Tjek overskrift (hvis den findes)
+                            header_text = ""
+                            try:
+                                header_elems = group.find_elements(By.CSS_SELECTOR, "span.pack")
+                                if header_elems:
+                                    header_text = header_elems[0].get_attribute("innerText").strip().lower()
+                            except: pass
+
+                            # A. Hvis der står "fly", vil vi ALDRIG have den
+                            if "fly" in header_text: continue
                             
-                            if "fly" in header or "hotel" not in header: continue
-                            
+                            # B. Hvis der eksplicit står "kun billet" (uden hotel), vil vi ikke have den
+                            if "billet" in header_text and "hotel" not in header_text and "pakke" not in header_text:
+                                continue
+
                             rows = group.find_elements(By.CSS_SELECTOR, "tbody tr")
                             for row in rows:
                                 try:
-                                    provider_text = row.find_element(By.TAG_NAME, "td").text.strip()
+                                    provider_text = row.find_element(By.TAG_NAME, "td").get_attribute("innerText").strip()
                                     
-                                    # --- VIGTIG ÆNDRING: FILTRERING AF UDBYDER ---
-                                    # Her tjekker vi, om udbyderen er "Footballtravel" (eller lignende).
-                                    # Hvis ja, så springer vi over, da vi har data fra CSV.
-                                    # Vi bruger .lower() og fjerner mellemrum for at fange "Football Travel", "footballtravel" osv.
+                                    # --- DIN SPECIFIKKE FILTRERING AF DUBLETTER ---
+                                    # Denne blok er bevaret 100% som du ønskede
                                     prov_check = provider_text.lower().replace(" ", "")
-                                    
-                                    if "footballtravel" in prov_check or "olka" in prov_check:
-                                        # Vi ignorerer denne række, da den er hentet via CSV
-                                        continue 
-                                    # ---------------------------------------------
+                                    if "footballtravel" in prov_check or "olka" in prov_check or "fantravel" in prov_check:
+                                        continue
+                                    # ----------------------------------------------
 
-                                    btn = row.find_element(By.CLASS_NAME, "koebsknap")
-                                    link = btn.get_attribute("href")
-                                    
-                                    raw_price = btn.text
-                                    price_clean = float(re.sub(r"[^\d]", "", raw_price))
-                                    
+                                    # Hent nætter
+                                    nights = 0
                                     try: 
-                                        nights_text = row.find_element(By.CLASS_NAME, "nightsamount").text
+                                        nights_elem = row.find_element(By.CLASS_NAME, "nightsamount")
+                                        nights_text = nights_elem.get_attribute("innerText")
                                         nights = int(re.search(r"(\d+)", nights_text).group(1))
-                                    except: nights = 0
+                                    except: 
+                                        nights = 0
+
+                                    # --- LOGIK TIL AT FANGE LA TRAVEL / FODBOLDPAKKER ---
+                                    # Vi accepterer rækken hvis:
+                                    # 1. Overskriften siger "Hotel" (Standard)
+                                    #    ELLER
+                                    # 2. Der er > 0 nætter (Fanger dem uden header)
+                                    is_hotel_package = "hotel" in header_text or nights > 0
+                                    
+                                    if not is_hotel_package:
+                                        continue
+
+                                    # Hent pris og link
+                                    try:
+                                        btn = row.find_element(By.CLASS_NAME, "koebsknap")
+                                        link = btn.get_attribute("href")
+                                        raw_price = btn.get_attribute("innerText")
+                                        price_clean = float(re.sub(r"[^\d]", "", raw_price))
+                                    except: continue
 
                                     if link and "bestil-tilbud" not in link:
                                         local_data.append({
@@ -183,6 +201,24 @@ def scrape_specific_club(args):
         driver.quit()
     
     return local_data
+
+# --- 2. FETCH URLS ---
+@st.cache_resource(ttl=3600)
+def fetch_website_urls():
+    website_data_lower = {}
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(URL, headers=headers, timeout=10)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            section = soup.find(id="klubber")
+            if section:
+                for link in section.find_all('a'):
+                    clean_name = clean(link.get_text(strip=True))
+                    website_data_lower[clean_name] = urljoin(URL, link.get('href', ''))
+    except Exception as e:
+        print(f"Fejl ved URL hentning: {e}")
+    return website_data_lower
 
 # --- 4. MAIN EXPORT FUNCTION ---
 def get_prices(selected_clubs):
@@ -228,3 +264,6 @@ def get_prices(selected_clubs):
         df = df[existing_cols]
 
     return df
+
+if __name__ == "__main__":
+    print("Test run...")

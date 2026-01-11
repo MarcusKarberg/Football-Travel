@@ -5,18 +5,24 @@ import os
 import time
 import subprocess
 import sys
+
+# Tjekker for Playwright
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
-subprocess.run(["playwright", "install", "chromium"])
+    subprocess.run(["playwright", "install", "chromium"])
+
 from datetime import datetime, timedelta
-from openpyxl.styles import Border, Side, PatternFill, Font
+# Tilføjet 'Alignment' til imports for at kunne rotere tekst
+from openpyxl.styles import Border, Side, PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
 # --- IMPORTER VORES MODULER ---
-import Footballtravel    
-import Olka  
+# Sørg for at filerne (Footballtravel.py, Olka.py, osv.) ligger i samme mappe
+import Footballtravel   
+import Olka 
+import Fantravel 
 import Fodboldrejseguiden  
 
 st.set_page_config(page_title="Football Scraper Pro", layout="wide")
@@ -59,211 +65,279 @@ def main():
     if selected:
         st.divider()
         if st.button("🔎 Søg efter priser", type="primary"):
-                    # --- START TIMER ---
-            start_time = time.time()  # <--- Added this to capture start time
             
-            P_FT = 60   # Hurtig (CSV)
-            P_OLKA = 450 # Langsom (Browser)
-            P_FRG = 300  # Langsom (Browser)
+            # --- START TIMER ---
+            start_time = time.time()
             
-            total_points = P_FT + P_OLKA + P_FRG
+            # Vægtning af tid (til progress bar)
+            P_FT = 60
+            P_OLKA = 450
+            P_Fantravel = 130
+            P_FRG = 300
+            total_points = P_FT + P_OLKA + P_FRG + P_Fantravel
             current_points = 0
             
-            # 2. OPRET PROGRESS BAR
+            # Progress Bar
             progress_bar = st.progress(0, text="Starter søgning...")
-            current_points += P_FT
-            progress_bar.progress(current_points / total_points)
-
             status = st.status("Arbejder...", expanded=True)
             
-            # --- 1. Hent fra FootballTravel (CSV) ---
-            status.write("🤓Data fra Footballtravel")
+            # --- 1. FootballTravel ---
+            status.write("🤓 Data fra Footballtravel")
+            time.sleep(1)  # Simpel pause for bedre UX
             try:
                 df1 = Footballtravel.get_prices(selected)
-                if not df1.empty:
-                    df1['Provider'] = "Footballtravel.dk"
+                if not df1.empty: df1['Provider'] = "Footballtravel.dk"
                 st.toast(f"Footballtravel: {len(df1)} tilbud fundet", icon="✅")
             except Exception as e:
                 st.error(f"Fejl i Footballtravel: {e}")
                 df1 = pd.DataFrame()
-
             current_points += P_FT
-            progress_bar.progress(current_points / total_points, text="Footballtravel færdig. Starter Olka...")
+            progress_bar.progress(current_points / total_points, text="Footballtravel færdig...")
             
-            # --- 2. Hent fra Olka (Selenium/Playwright) ---
+            # --- 2. Olka ---
             status.write("🌐 Data fra Olka")
             try:
                 df2 = Olka.get_prices(selected)
-                if not df2.empty:
-                    st.toast(f"Olka: {len(df2)} tilbud fundet", icon="✅")
-                else:
-                    st.toast("Olka: Ingen tilbud fundet", icon="⚠️")
+                st.toast(f"Olka: {len(df2)} tilbud fundet", icon="✅" if not df2.empty else "⚠️")
             except Exception as e:
                 st.error(f"Fejl i OLKA: {e}")
                 df2 = pd.DataFrame()
-            
             current_points += P_OLKA
-            progress_bar.progress(current_points / total_points, text="Olka færdig. Starter resterende...")
+            progress_bar.progress(current_points / total_points, text="Olka færdig...")
 
-            # --- 3. Hent fra Fodboldrejseguiden (Selenium) ---
-            status.write("👽 Data fra de resterende")
+            # --- 3. Fantravel ---
+            status.write("🤡 Data fra Fantravel")
+            try:
+                df3 = Fantravel.get_prices(selected)
+                st.toast(f"Fantravel: {len(df3)} tilbud fundet", icon="✅" if not df3.empty else "⚠️")
+            except Exception as e:
+                st.error(f"Fejl i Fantravel: {e}")
+                df3 = pd.DataFrame()
+            current_points += P_Fantravel
+            progress_bar.progress(current_points / total_points, text="Fantravel færdig...")
+
+            # --- 4. Fodboldrejseguiden ---
+            status.write("👽 Data fra resterende")
             try:
                 df5 = Fodboldrejseguiden.get_prices(selected)
                 st.toast(f"Fodboldrejseguiden: {len(df5)} tilbud fundet", icon="✅")
             except Exception as e:
-                st.error(f"Fejl i Fodboldrejseguiden: {e}")
+                st.error(f"Fejl ved resterende: {e}")
                 df5 = pd.DataFrame()
-            
             current_points += P_FRG
             progress_bar.progress(1.0, text="Færdig!")
 
-                    # --- STOP TIMER ---
-            end_time = time.time()               # <--- Capture end time
-            elapsed_time = end_time - start_time # <--- Calculate difference
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-                    # Update status with time
-            status.update(label=f"Færdig! (Tid: {minutes}m {seconds}s)", state="complete", expanded=False)
-            st.success(f"✅ Søgning gennemført på {minutes} minutter og {seconds} sekunder.")
+            # --- STOP TIMER ---
+            end_time = time.time()
+            elapsed = int(end_time - start_time)
+            mins, secs = divmod(elapsed, 60)
+            status.update(label=f"Færdig! (Tid: {mins}m {secs}s)", state="complete", expanded=False)
+            st.success(f"✅ Søgning gennemført på {mins} minutter og {secs} sekunder.")
 
-            status.update(label="Færdig!", state="complete", expanded=False)
-
-            # --- 4. SAML DATA ---
-            # Nu hvor alle 3 er kørt, samler vi dem i én liste
-            frames = [df1, df2, df5]
-            
+            # --- SAML DATA ---
+            frames = [df1, df2, df3, df5]
             if all(df.empty for df in frames):
-                st.warning("Ingen priser fundet hos nogen udbydere.")
+                st.warning("Ingen priser fundet.")
                 st.stop()
             
             full_df = pd.concat(frames, ignore_index=True)
 
-            # --- 5. DATA RENSNING & FLETNING ---
+            # Rensning
             full_df['Provider'] = full_df['Provider'].fillna("Ukendt").astype(str)
             full_df = full_df[full_df['Provider'].str.strip() != ""]
-
-            # Konverter datoer
             full_df['SortDate'] = pd.to_datetime(full_df['SortDate'], errors='coerce')
             full_df = full_df.dropna(subset=['SortDate'])
 
-            # FILTER: Fjern kampe indenfor 24 timer
-            now = datetime.now()
-            cutoff_time = now + timedelta(hours=24)
-            full_df = full_df[full_df['SortDate'] > cutoff_time]
-
+            # Filter: > 24 timer
+            cutoff = datetime.now() + timedelta(hours=24)
+            full_df = full_df[full_df['SortDate'] > cutoff]
             if full_df.empty:
-                st.warning("Ingen kampe fundet længere end 24 timer frem.")
+                st.warning("Ingen relevante kampe fundet.")
                 st.stop()
 
-            # Sorter data
+            # Sortering og ID-generering
             full_df = full_df.sort_values(by=['Club', 'SortDate'])
-
-            # Logik: Fuzzy Match
             full_df['club_change'] = full_df['Club'] != full_df['Club'].shift()
             full_df['date_diff'] = full_df['SortDate'].diff().dt.days.abs()
             full_df['big_gap'] = full_df['date_diff'] > 2 
-
-            # Tildel ID
             full_df['Match_Group_ID'] = (full_df['club_change'] | full_df['big_gap']).cumsum()
 
-            # --- 6. PIVOT OG FORMATERING ---
-            group_meta = full_df.groupby('Match_Group_ID').agg({
-                'Club': 'first',
-                'Match': lambda x: max(x, key=len), 
-                'SortDate': 'first'
-            })
 
-            group_meta['Date_Str'] = group_meta['SortDate'].dt.strftime('%d/%m')
-            group_meta['Match_Display'] = group_meta['Match'] + " (" + group_meta['Date_Str'] + ")"
-
-            # Pivot tabeller
-            pivot_price = full_df.pivot_table(index='Match_Group_ID', columns='Provider', values='Price', aggfunc='min')
-            pivot_nights = full_df.pivot_table(index='Match_Group_ID', columns='Provider', values='Nights', aggfunc='max')
-
-            # Byg DataFrame
-            final_df = pd.DataFrame(index=group_meta.index)
-            final_df['Club'] = group_meta['Club']
-            final_df['SortDate'] = group_meta['SortDate']
-            final_df['Match_Display'] = group_meta['Match_Display']
-
-            # --- VIGTIGT: SORTERING AF UDBYDERE ---
+            # --- FORBERED DATA TIL EXCEL (TRANSFORMERING) ---
+            
+            # 1. Find alle unikke udbydere og sorter dem
             all_providers = sorted(full_df['Provider'].unique())
+            if "Footballtravel.dk" in all_providers:
+                all_providers.remove("Footballtravel.dk")
+                all_providers.insert(0, "Footballtravel.dk")
+
+            # 2. Gruppér data per kamp
+            matches_grouped = full_df.groupby('Match_Group_ID').agg({
+                'Club': 'first',
+                'Match': lambda x: max(x, key=len),
+                'SortDate': 'first'
+            }).reset_index()
+
+            match_data_list = []
             
-            # Tving "Footballtravel.dk" (CSV-kilden) frem som nr. 1
-            pri_provider = "Footballtravel.dk"
-            if pri_provider in all_providers:
-                all_providers.remove(pri_provider)
-                all_providers.insert(0, pri_provider)
+            for _, match_row in matches_grouped.iterrows():
+                group_id = match_row['Match_Group_ID']
+                match_name = match_row['Match']
+                date_str = match_row['SortDate'].strftime('%d/%m')
+                display_name = f"{match_name} ({date_str})"
+                
+                prices_in_group = full_df[full_df['Match_Group_ID'] == group_id]
+                
+                provider_data = {}
+                
+                for _, p_row in prices_in_group.iterrows():
+                    prov = p_row['Provider']
+                    price_val = p_row['Price']
+                    nights_val = p_row['Nights']
+                    
+                    # LOGIK ÆNDRING 1:
+                    # Vi gemmer kun prisen, hvis vi ikke har set udbyderen før, 
+                    # ELLER hvis den nye pris er lavere end den vi allerede har.
+                    if prov not in provider_data or price_val < provider_data[prov]['price']:
+                        provider_data[prov] = {
+                            'price': price_val,
+                            'nights': nights_val
+                        }
+                
+                # LOGIK ÆNDRING 2:
+                # Vi beregner min/max baseret på de priser, der FAKTISK bliver vist
+                final_prices = [d['price'] for d in provider_data.values() if d['price'] > 0]
+                
+                min_price = min(final_prices) if final_prices else None
+                max_price = max(final_prices) if final_prices else None
 
-            # Indsæt kolonner
-            for prov in all_providers:
-                if prov in pivot_price:
-                    final_df[prov] = pivot_price[prov].fillna(0).astype(int)
-                    final_df[f"{prov} nætter"] = pivot_nights[prov].fillna(0).astype(int)
-
-            # Endelig sortering af rækker
-            final_df = final_df.sort_values(by=['Club', 'SortDate'])
-
-            # Klargør til Excel
-            export_df = final_df.copy()
-            ordered_clubs = export_df['Club'].tolist()
-            
-            excel_data = export_df.drop(columns=['Club', 'SortDate'])
-            cols = ['Match_Display'] + [c for c in excel_data.columns if c != 'Match_Display']
-            excel_data = excel_data[cols]
+                match_data_list.append({
+                    'display': display_name,
+                    'data': provider_data,
+                    'min_price': min_price, 
+                    'max_price': max_price,
+                    'club': match_row['Club']
+                })
 
             # --- 7. EXCEL GENERERING ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                excel_data.to_excel(writer, sheet_name='Prices', startrow=2)
-                ws = writer.sheets['Prices']
+                writer.book.create_sheet('Prices')
+                ws = writer.book['Prices']
                 
-                ws['A1'] = "Prices: Ticket + Hotel"
-                ws['A1'].font = Font(size=16, bold=True)
-                ws.column_dimensions['A'].width = 40
-                
-                for col_idx, col_name in enumerate(excel_data.columns, 2):
-                    col_letter = get_column_letter(col_idx)
-                    ws.column_dimensions[col_letter].width = 20
+                # --- NYT: FJERN GITTERLINJER ---
+                ws.sheet_view.showGridLines = False
 
-                thick_border = Border(top=Side(style='medium'))
+                # Definitioner af styles
+                header_font = Font(bold=True)
+                header_alignment = Alignment(textRotation=45, vertical='bottom', horizontal='center')
                 
-                for i, club in enumerate(ordered_clubs):
-                    row = i + 4
-                    if i > 0 and club != ordered_clubs[i-1]:
-                        for cell in ws[row]: cell.border = thick_border
+                # --- NYT: Ramme-definitioner ---
+                thin_side = Side(style='thin')
+                medium_side = Side(style='medium') # Tykkere streg
                 
-                # Farver
-                price_cols_indices = []
-                for idx, col_name in enumerate(excel_data.columns, 2):
-                    if "nætter" not in str(col_name).lower() and col_name != "Match_Display":
-                        price_cols_indices.append(idx)
+                # Standard ramme (tynd hele vejen rundt)
+                thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+                
+                # Ramme til start af ny klub (tyk venstre kant)
+                thick_left_border = Border(left=medium_side, right=thin_side, top=thin_side, bottom=thin_side)
 
                 green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-                red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
 
-                for r in range(4, 4 + len(ordered_clubs)):
-                    row_prices = []
-                    for c_idx in price_cols_indices:
-                        val = ws.cell(row=r, column=c_idx).value
-                        if isinstance(val, (int, float)) and val > 0:
-                            row_prices.append(val)
+                # --- A. SKRIV HEADERS ---
+                col_idx = 2
+                prev_club = None # Til at huske forrige klub
+
+                for match in match_data_list:
+                    # Tjek om vi skal bruge tyk kant (hvis klubben skifter og det ikke er første kolonne)
+                    current_club = match['club']
+                    use_thick_border = (prev_club is not None) and (current_club != prev_club)
+                    current_border = thick_left_border if use_thick_border else thin_border
                     
-                    if row_prices:
-                        min_p = min(row_prices)
-                        max_p = max(row_prices)
-                        for c_idx in price_cols_indices:
-                            cell = ws.cell(row=r, column=c_idx)
-                            val = cell.value
-                            if isinstance(val, (int, float)) and val > 0:
-                                if val == min_p: cell.fill = green_fill
-                                if val == max_p and len(row_prices) > 1: cell.fill = red_fill
+                    # Opdater prev_club
+                    prev_club = current_club
 
-            # Download
+                    cell_match = ws.cell(row=1, column=col_idx, value=match['display'])
+                    cell_match.font = header_font
+                    cell_match.alignment = header_alignment
+                    cell_match.border = current_border # Brug den valgte ramme
+                    
+                    cell_nights = ws.cell(row=1, column=col_idx+1, value="Nætter")
+                    cell_nights.font = header_font
+                    cell_nights.alignment = header_alignment
+                    cell_nights.border = thin_border # Altid tynd her (det er inde i samme kamp)
+                    
+                    ws.column_dimensions[get_column_letter(col_idx)].width = 15
+                    ws.column_dimensions[get_column_letter(col_idx+1)].width = 8
+                    
+                    col_idx += 2
+
+                # --- B. SKRIV RÆKKER (VIRKSOMHEDER) ---
+                row_idx = 2
+                
+                for provider in all_providers:
+                    cell_prov = ws.cell(row=row_idx, column=1, value=provider)
+                    cell_prov.font = Font(bold=True)
+                    cell_prov.border = Border(top=medium_side, bottom=medium_side, left=medium_side, right=medium_side)
+                    
+                    col_idx = 2
+                    prev_club = None # Nulstil for hver række
+
+                    for match in match_data_list:
+                        # Samme logik for at finde ramme-typen
+                        current_club = match['club']
+                        use_thick_border = (prev_club is not None) and (current_club != prev_club)
+                        current_border = thick_left_border if use_thick_border else thin_border
+                        prev_club = current_club
+
+                        p_data = match['data'].get(provider, {'price': 0, 'nights': 0})
+                        price = p_data['price']
+                        nights = p_data['nights']
+                        
+                        # Skriv Pris
+                        cell_p = ws.cell(row=row_idx, column=col_idx, value=price if price > 0 else "")
+                        cell_p.border = current_border # Sæt rammen her på prisen (venstre celle i parret)
+                        
+                        if price > 0:
+                            if price == match['min_price']:
+                                cell_p.fill = green_fill
+                            elif price == match['max_price']:
+                                cell_p.fill = red_fill
+                        
+                        # Skriv Nætter
+                        cell_n = ws.cell(row=row_idx, column=col_idx+1, value=nights if nights > 0 else "")
+                        cell_n.border = thin_border # Altid tynd
+                        
+                        col_idx += 2
+                    
+                    row_idx += 1
+
+                ws.column_dimensions['A'].width = 25
+                ws.freeze_panes = "B2"
+
+            # Download Knap og Preview (uændret)
             timestamp = datetime.now().strftime("%H-%M")
-            st.download_button("📥 Download Excel", output.getvalue(), f"prices_{timestamp}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "📥 Download Excel", 
+                output.getvalue(), 
+                f"prices_matrix_{timestamp}.xlsx", 
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
             
-            st.dataframe(excel_data, use_container_width=True)
+            # Vis preview i Streamlit (Vi laver en simpel dataframe til visning da Streamlit ikke viser rotationer)
+            preview_df = pd.DataFrame(index=all_providers)
+            for m in match_data_list:
+                col_name = m['display']
+                # Byg en kolonne med priser for preview
+                prices = []
+                for p in all_providers:
+                    val = m['data'].get(p, {}).get('price', 0)
+                    prices.append(val if val > 0 else 0)
+                preview_df[col_name] = prices
+            
+            st.write("Preview af data:")
+            st.dataframe(preview_df, use_container_width=True)
 
 if __name__ == "__main__":
     main()

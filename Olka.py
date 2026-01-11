@@ -167,20 +167,20 @@ def scrape_prices(df_matches):
             print(f"[{index + 1}/{total}] Checking: {row['Match']}")
             
             # --- HUMAN DELAY START ---
-            sleep_time = random.uniform(0.7, 1.3)
+            sleep_time = random.uniform(1.1, 1.9)
             print(f"   ...waiting {sleep_time:.2f}s to act human...")
             time.sleep(sleep_time) 
             # -------------------------
 
             try:
                 page.goto(url, timeout=60000)
-                time.sleep(random.uniform(0.5, 0.9))
+                time.sleep(random.uniform(1.1, 1.9))
 
                 try:
                     cookie_knap = page.get_by_role("button", name=re.compile("Godkend|Allow all|Accepter", re.IGNORECASE))
                     if cookie_knap.is_visible(timeout=2000):
                         cookie_knap.click()
-                        time.sleep(0.4) 
+                        time.sleep(1.1) 
                 except:
                     pass
 
@@ -228,7 +228,8 @@ def get_prices(selected_clubs):
     
     # UPDATED: Add missing columns for EN_scraper_app compatibility
     df_results['Provider'] = "Olka Express"
-    df_results['Nights'] = 2
+    # Sæt Nætter til 2, HVIS der er en pris (og den ikke er None/0). Ellers 0.
+    df_results['Nights'] = df_results['Price'].apply(lambda x: 2 if pd.notnull(x) and x > 0 else 0)
     
     # UPDATED: Return all necessary columns including SortDate and Club
     output_df = df_results[['Club', 'SortDate', 'Date', 'Match', 'Price', 'Nights', 'Provider', 'Link']]
