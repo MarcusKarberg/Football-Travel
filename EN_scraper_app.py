@@ -6,12 +6,16 @@ import time
 import subprocess
 import sys
 
-# Tjekker for Playwright
+# Tjekker for Playwright og installerer browser
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
-    subprocess.run(["playwright", "install", "chromium"])
+    from playwright.sync_api import sync_playwright
+
+# TVING installation af Chromium browseren (denne linje løser din fejl)
+# Playwright tjekker selv, om den allerede er der, så det tager ikke tid hver gang.
+subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
 
 from datetime import datetime, timedelta
 # Tilføjet 'Alignment' til imports for at kunne rotere tekst
