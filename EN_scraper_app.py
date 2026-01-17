@@ -229,14 +229,14 @@ def main():
                 writer.book.create_sheet('Prices')
                 ws = writer.book['Prices']
                 
-                # --- NYT: FJERN GITTERLINJER ---
+                #  FJERN GITTERLINJER ---
                 ws.sheet_view.showGridLines = False
 
                 # Definitioner af styles
                 header_font = Font(bold=True)
                 header_alignment = Alignment(textRotation=45, vertical='bottom', horizontal='center')
                 
-                # --- NYT: Ramme-definitioner ---
+                #  Ramme-definitioner ---
                 thin_side = Side(style='thin')
                 medium_side = Side(style='medium') # Tykkere streg
                 
@@ -316,6 +316,68 @@ def main():
                         col_idx += 2
                     
                     row_idx += 1
+                
+                row_idx += 2
+
+                # Overskrift til sammenligningsafsnit
+                sect_header = ws.cell(row=row_idx, column=1, value="Sammenligning med Footballtravel.dk. Grøn = dyrere, Rød = billigere")
+                sect_header.font = Font(bold=True, size=11)
+                sect_header.border = Border(bottom=medium_side)
+                row_idx += 1
+
+                for provider in all_providers:
+                    cell_prov = ws.cell(row=row_idx, column=1, value=provider)
+                    cell_prov.font = Font(bold=True)
+                    cell_prov.border = Border(top=medium_side, bottom=medium_side, left=medium_side, right=medium_side)
+                    
+                    col_idx = 2
+                    prev_club = None
+
+                    for match in match_data_list:
+                        # Samme logik for at finde ramme-typen
+                        current_club = match['club']
+                        use_thick_border = (prev_club is not None) and (current_club != prev_club)
+                        current_border = thick_left_border if use_thick_border else thin_border
+                        prev_club = current_club
+
+                        p_data = match['data'].get(provider, {'price': 0, 'nights': 0})
+                        price = p_data['price']
+                        nights = p_data['nights']
+
+                        # Sikkerhed
+                        ft_data = match['data'].get("Footballtravel.dk", {'price': 0, 'nights': 0})
+                        ft_nights = ft_data['nights']
+                        ft_price = ft_data['price']
+
+                        # Beregn prisforskel mod Footballtravel.dk
+                        price_diff_val = ""
+                        if price > 0 and ft_price > 0:
+                            price_diff_val = price - ft_price                       
+
+                        # Forskel på nætter mod Footballtravel.dk
+                        nights_diff_val = ""
+                        if price > 0 and ft_nights > 0:
+                            nights_diff_val = nights - ft_nights
+                        
+                        # Skriv i excel
+                        # Pris
+                        cell_p_diff = ws.cell(row=row_idx, column=col_idx, value=price_diff_val)
+                        cell_p_diff.border = current_border
+
+                        # Farv cellen grøm
+                        if isinstance(price_diff_val, (int, float)):
+                            if price_diff_val > 0:
+                                cell_p_diff.fill = green_fill
+                            elif price_diff_val < 0:
+                                cell_p_diff.fill = red_fill
+                        
+                        # Nætter
+                        cell_n_diff = ws.cell(row=row_idx, column=col_idx+1, value=nights_diff_val)
+                        cell_n_diff.border = thin_border
+
+                        col_idx += 2
+                    
+                    row_idx += 1
 
                 ws.column_dimensions['A'].width = 25
                 ws.freeze_panes = "B2"
@@ -339,6 +401,9 @@ def main():
                     val = m['data'].get(p, {}).get('price', 0)
                     prices.append(val if val > 0 else 0)
                 preview_df[col_name] = prices
+
+            
+            
             
             st.write("Preview af data:")
             st.dataframe(preview_df, use_container_width=True)

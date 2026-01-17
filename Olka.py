@@ -167,14 +167,14 @@ def scrape_prices(df_matches):
             print(f"[{index + 1}/{total}] Checking: {row['Match']}")
             
             # --- HUMAN DELAY START ---
-            sleep_time = random.uniform(1.1, 1.9)
+            sleep_time = random.uniform(0.2, 1.3)
             print(f"   ...waiting {sleep_time:.2f}s to act human...")
             time.sleep(sleep_time) 
             # -------------------------
 
             try:
                 page.goto(url, timeout=60000)
-                time.sleep(random.uniform(1.1, 1.9))
+                time.sleep(random.uniform(0.2, 1.3))
 
                 try:
                     cookie_knap = page.get_by_role("button", name=re.compile("Godkend|Allow all|Accepter", re.IGNORECASE))
