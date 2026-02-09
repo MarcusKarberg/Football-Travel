@@ -9,7 +9,7 @@ import requests
 
 def send_discord_notification(selected_clubs, execution_time):
     try:
-        webhook_url = st.secrets["DISCORD_WEBHOOK_URL"]
+        webhook_url = st.secrets["https://discord.com/api/webhooks/1470497823421104280/WL8JtjK6DIyD7OfoHYtqXZVZK6J4bejH6k3rbfFzKIogP0WviHPkcjL66iJPAGk3q4e7"]
         
         # Formatering af besked
         payload = {

@@ -4,7 +4,6 @@ club_alias = {
     # Premier League
     "Brighton": ["Brighton & Hove", "Brighton and Hove"],
     "Leeds": ["Leeds United"],
-    "MANU": ["Manchester United"],
     "Newcastle": ["Newcastle United"],
     "Nottingham": ["Nottingham Forest"],
     "QPR": ["Queens Park Rangers"],

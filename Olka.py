@@ -43,6 +43,14 @@ TEAM_MAPPING = {
     "FC Barcelona": "fc-barcelona",
     "Atlético Madrid": "atltico-madrid",
     "Real Madrid": "real-madrid",
+    "Athletic Bilbao": "athletic-bilbao",
+    "Girona FC": "Girona-fc",
+    "RCD Mallorca": "rcd-mallorca",
+    "Real Betis": "real-betis",
+    "Real Sociedad": "Real-Sociedad",
+    "Sevilla FC": "Sevilla-FC",
+    "Valencia CF": "Valencia-CF",
+
     # Other
     "FC Kairat": "kairat-almaty",
     "Qarabag FK": "qarabag",
