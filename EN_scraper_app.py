@@ -5,6 +5,29 @@ import os
 import time
 import subprocess
 import sys
+import requests
+
+def send_discord_notification(selected_clubs, execution_time):
+    try:
+        webhook_url = st.secrets["DISCORD_WEBHOOK_URL"]
+        
+        # Formatering af besked
+        payload = {
+            "embeds": [{
+                "title": "⚽ Scraper Eksekveret",
+                "color": 3066993,  # Grøn farve
+                "fields": [
+                    {"name": "Klubber valgt", "value": ", ".join(selected_clubs), "inline": False},
+                    {"name": "Tid brugt", "value": execution_time, "inline": True},
+                    {"name": "Status", "value": "✅ Excel genereret", "inline": True}
+                ],
+                "timestamp": datetime.now().isoformat()
+            }]
+        }
+        
+        requests.post(webhook_url, json=payload)
+    except Exception as e:
+        print(f"Discord fejl: {e}")
 
 # Tjekker for Playwright og installerer browser
 try:
@@ -135,8 +158,11 @@ def main():
             end_time = time.time()
             elapsed = int(end_time - start_time)
             mins, secs = divmod(elapsed, 60)
-            status.update(label=f"Færdig! (Tid: {mins}m {secs}s)", state="complete", expanded=False)
-            st.success(f"✅ Søgning gennemført på {mins} minutter og {secs} sekunder.")
+            time_str = f"{mins}m {secs}s"
+            
+            send_discord_notification(selected, time_str)
+            status.update(label=f"Færdig! (Tid: {time_str})", state="complete", expanded=False)
+            st.success(f"✅ Søgning gennemført på {time_str}.")
 
             # --- SAML DATA ---
             frames = [df1, df2, df3, df5]
