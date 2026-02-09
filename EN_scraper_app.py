@@ -8,32 +8,26 @@ import sys
 import requests
 
 def send_discord_notification(selected_clubs, execution_time):
-    # Tjek om URL'en overhovedet findes i secrets
-    if "DISCORD_WEBHOOK_URL" not in st.secrets:
-        st.error("FEJL: 'DISCORD_WEBHOOK_URL' mangler i Streamlit Cloud Secrets!")
-        return
-
-    webhook_url = st.secrets["DISCORD_WEBHOOK_URL"]
-    
-    clubs_string = ", ".join(selected_clubs) if selected_clubs else "Ingen hold valgt"
-    
-    payload = {
-        "embeds": [{
-            "title": "⚽ Scraper Eksekveret (Online Test)",
-            "color": 3066993,
-            "fields": [
-                {"name": "Hold", "value": clubs_string, "inline": False},
-                {"name": "Tid", "value": execution_time, "inline": True}
-            ]
-        }]
-    }
-    
     try:
-        response = requests.post(webhook_url, json=payload)
-        response.raise_for_status() # Tjekker for HTTP fejl (f.eks. 404 eller 401)
+        webhook_url = st.secrets["DISCORD_WEBHOOK_URL"]
+        
+        # Formatering af besked
+        payload = {
+            "embeds": [{
+                "title": "⚽ Scraper Eksekveret",
+                "color": 3066993,  # Grøn farve
+                "fields": [
+                    {"name": "Klubber valgt", "value": ", ".join(selected_clubs), "inline": False},
+                    {"name": "Tid brugt", "value": execution_time, "inline": True},
+                    {"name": "Status", "value": "✅ Excel genereret", "inline": True}
+                ],
+                "timestamp": datetime.now().isoformat()
+            }]
+        }
+        
+        requests.post(webhook_url, json=payload)
     except Exception as e:
-        # VIS FEJLEN PÅ SKÆRMEN
-        st.error(f"Kunne ikke sende til Discord: {e}")
+        print(f"Discord fejl: {e}")
 
 # Tjekker for Playwright og installerer browser
 try:
