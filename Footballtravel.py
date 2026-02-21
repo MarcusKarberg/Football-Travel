@@ -39,20 +39,17 @@ def clean_nights(nights_str):
     except: return 0
 
 def check_club_match(row_text, selected_clubs):
-    """
-    Tjekker om en af de valgte klubber (eller deres aliaser) findes i teksten.
-    """
-    row_text_lower = str(row_text).lower()
+    row_text_lower = str(row_text).lower().strip()
     
     for club in selected_clubs:
         # 1. Tjek det direkte navn
-        if club.lower() in row_text_lower:
+        if club.lower() == row_text_lower:
             return club
         
         # 2. Tjek aliaser
         if club in club_alias:
             for alias in club_alias[club]:
-                if alias.lower() in row_text_lower:
+                if alias.lower() == row_text_lower:
                     return club 
     return None
 
@@ -62,52 +59,45 @@ def get_prices(selected_clubs):
 
     processed_data = []
     
-    # Kolonne indexer
-    IDX_FILTER_TYPE = 1   # B
-    IDX_PRICE = 4         # E
-    IDX_FILTER_CLUB = 7   # H
-    IDX_OPPONENT = 8      # I
-    IDX_DATE = 14         # O
-    IDX_NIGHTS = 16       # Q
+     # Column indices
+    IDX_FILTER_TYPE = 1   
+    IDX_PRICE = 4         
+    IDX_FILTER_CLUB = 7   
+    IDX_OPPONENT = 8      
+    IDX_DATE = 14         
+    IDX_NIGHTS = 16       
 
     for index, row in full_df.iterrows():
         if len(row) <= IDX_NIGHTS: continue
-        try:
-            # 1. TJEK KLUB
-            row_club_text = str(row[IDX_FILTER_CLUB]).strip()
-            found_club = check_club_match(row_club_text, selected_clubs)
-            if not found_club: continue
-
-            # 2. TJEK TYPE
-            if "billet + hotel" not in str(row[IDX_FILTER_TYPE]).lower(): continue
-
-            # 3. PRIS
-            price = clean_price(row[IDX_PRICE])
-            if price < 10: continue
-
-            # 4. DATA
-            nights = clean_nights(row[IDX_NIGHTS])
-            
-            date_obj = pd.NaT
-            try:
-                # HER VAR FEJLEN: Vi tilføjer dayfirst=True
-                # Dette tvinger pandas til at læse 07/02 som 7. feb, ikke 2. juli
-                date_obj = pd.to_datetime(str(row[IDX_DATE]), dayfirst=True, errors='coerce')
-            except: pass
-            
-            sort_date = date_obj if pd.notnull(date_obj) else datetime(2100, 1, 1)
-
-            # 5. NAVN
-            match_name = f"{str(row[IDX_FILTER_CLUB]).strip()} – {str(row[IDX_OPPONENT]).strip()}"
-
-            processed_data.append({
-                "Club": found_club,
-                "Match": match_name,
-                "SortDate": sort_date,
-                "Price": price,
-                "Provider": PROVIDER_NAME,
-                "Nights": nights
-            })
-        except: continue
         
-    return pd.DataFrame(processed_data)
+        row_club_text = str(row[IDX_FILTER_CLUB]).strip()
+        found_club = check_club_match(row_club_text, selected_clubs)
+        
+        if not found_club: continue
+        if "billet + hotel" not in str(row[IDX_FILTER_TYPE]).lower(): continue
+
+        price = clean_price(row[IDX_PRICE])
+        if price < 10: continue
+
+        nights = clean_nights(row[IDX_NIGHTS])
+        date_obj = pd.to_datetime(str(row[IDX_DATE]), dayfirst=True, errors='coerce')
+        sort_date = date_obj if pd.notnull(date_obj) else datetime(2100, 1, 1)
+
+        match_name = f"{str(row[IDX_FILTER_CLUB]).strip()} – {str(row[IDX_OPPONENT]).strip()}"
+
+        processed_data.append({
+            "Club": found_club,
+            "Match": match_name,
+            "SortDate": sort_date,
+            "Price": price,
+            "Provider": PROVIDER_NAME,
+            "Nights": nights
+        })
+        
+    df = pd.DataFrame(processed_data)
+    if df.empty: return df
+
+    # Eliminate duplicates by keeping the cheapest price for each unique match/date combination
+    df = df.sort_values("Price").drop_duplicates(subset=["Match", "SortDate"], keep="first")
+    
+    return df

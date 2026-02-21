@@ -20,38 +20,68 @@ URL_TEMPLATE = "https://olka.dk/event/soccer/{date}-{home}-{away}/"
 # Mapping for URL slugs (specific to Olka's URL structure)
 TEAM_MAPPING = {
     #English
-    "Bournemouth": "bournemouth",
     "Aston Villa": "aston-villa",
     "Leeds": "leeds-united",
-    "Brentford": "brentford",
-    "Burnley": "burnley",
     "Brighton": "brighton",
     "Chelsea": "chelsea-fc",
     "Crystal Palace": "crystal-palace",
-    "Everton": "everton",
     "Fulham": "fulham-fc",
     "Liverpool FC": "liverpool-fc",
-    "Liverpool": "liverpool-fc",
     "Manchester United": "manchester-united",
     "Newcastle": "newcastle-united",
     "Nottingham Forest": "nottingham-forest",
-    "Sunderland": "sunderland",
     "West Ham": "west-ham",
     "Wolverhampton": "wolves",
-    "Tottemnham": "tottenham",
     # Spanish
     "FC Barcelona": "fc-barcelona",
     "Atlético Madrid": "atltico-madrid",
     "Real Madrid": "real-madrid",
+    "Alavés": "alaves",
     "Athletic Bilbao": "athletic-bilbao",
-    "Girona FC": "Girona-fc",
-    "RCD Mallorca": "rcd-mallorca",
-    "Real Betis": "real-betis",
-    "Real Sociedad": "Real-Sociedad",
-    "Sevilla FC": "Sevilla-FC",
-    "Valencia CF": "Valencia-CF",
-
+    "Celta": "celta-de-vigo",
+    "Girona": "girona-fc",
+    "Levante": "levante",
+    "Mallorca": "rcd-mallorca",
+    "Bétis": "real-betis",
+    "Real Sociedad": "real-sociedad",
+    "Real Madrid": "real-madrid",
+    "Sevilla": "sevilla-fc",
+    "Valencia": "valencia-cf",
+    "Vallecano": "rayo-vallecano",
+    # Italian
+    "Bologna": "bologna-fc",
+    "Como": "como-1907",
+    "Genoa": "genoa-cfc",
+    "Lazio": "lazio",
+    "Milan": "ac-milan",
+    "Roma": "as-roma",
+    "Torino": "torino-fc",
+    "Verona": "hellas-verona",
+    # German
+    "1. FC Köln": "fc-kln",
+    "Augsburg": "fc-augsburg",
+    "Bayern München": "bayern-mnchen",
+    "Frankfurt": "eintracht-fraankfurt",
+    "Freiburg": "ss-freiburg",
+    "Gladbach": "mnchengladbach",
+    "Hamburger SV": "hamburger-sv",
+    "Heridenheim": "fc-heidenheim",
+    "Leverkusen": "bayer-leverkusen",
+    "Mainz": "mainz-05",
+    "St. Pauli": "st-pauli",
+    "Union Berlin": "union-berlin",
+    # France
+    "Brest": "stade-brest",
+    "FC Metz": "fc-metz",
+    "Le Havre": "le-havre",
+    "Lyon": "olympique-lyon",
+    "Monaco": "as-monaco-fc",
+    "Nice": "ogc-nice",
+    "Rennes": "stade-rennais",
+    "PSG": "paris-saint-germain",
     # Other
+    "Bodø/Glimt": "bodoglimt",
+    "Club Brugge": "club-brugge",
     "FC Kairat": "kairat-almaty",
     "Qarabag FK": "qarabag",
 }
@@ -82,6 +112,9 @@ def get_slug(team_name, is_home=False):
     
     if "Arsenal" in clean_name:
         return "arsenal-" if is_home else "arsenal-fc"
+    
+    if "Dortmund" in clean_name:
+        return "borussia-dortmund-" if is_home else "borussia-dortmund-"
             
     for key, slug in TEAM_MAPPING.items():
         if key.lower() in clean_name.lower():
@@ -175,14 +208,14 @@ def scrape_prices(df_matches):
             print(f"[{index + 1}/{total}] Checking: {row['Match']}")
             
             # --- HUMAN DELAY START ---
-            sleep_time = random.uniform(0.2, 1.3)
+            sleep_time = random.uniform(0.6, 0.8)
             print(f"   ...waiting {sleep_time:.2f}s to act human...")
             time.sleep(sleep_time) 
             # -------------------------
 
             try:
                 page.goto(url, timeout=60000)
-                time.sleep(random.uniform(0.2, 1.3))
+                time.sleep(random.uniform(0.6, 0.8))
 
                 try:
                     cookie_knap = page.get_by_role("button", name=re.compile("Godkend|Allow all|Accepter", re.IGNORECASE))

@@ -20,7 +20,12 @@ except ImportError:
     club_alias = {}
     suffix_pattern = None
 
-URL = "https://www.fodboldrejseguiden.dk/fodboldrejser-england/"
+URLS = [ "https://www.fodboldrejseguiden.dk/fodboldrejser-england/",
+        "https://www.fodboldrejseguiden.dk/fodboldrejser-spanien/",
+        "https://www.fodboldrejseguiden.dk/fodboldrejser-frankrig/",
+        "https://www.fodboldrejseguiden.dk/fodboldrejser-tyskland/",
+        "https://www.fodboldrejseguiden.dk/fodboldrejser-italien/"
+]
 PROVIDER_NAME = "Fodboldrejseguiden.dk"
 
 # --- 1. SETUP CHROME DRIVER ---
@@ -206,18 +211,19 @@ def scrape_specific_club(args):
 @st.cache_resource(ttl=3600)
 def fetch_website_urls():
     website_data_lower = {}
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(URL, headers=headers, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            section = soup.find(id="klubber")
-            if section:
-                for link in section.find_all('a'):
-                    clean_name = clean(link.get_text(strip=True))
-                    website_data_lower[clean_name] = urljoin(URL, link.get('href', ''))
-    except Exception as e:
-        print(f"Fejl ved URL hentning: {e}")
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for base_url in URLS:
+        try:
+            response = requests.get(base_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                section = soup.find(id="klubber")
+                if section:
+                    for link in section.find_all('a'):
+                        clean_name = clean(link.get_text(strip=True))
+                        website_data_lower[clean_name] = urljoin(base_url, link.get('href', ''))
+        except Exception as e:
+            print(f"Fejl ved URL hentning for {base_url}: {e}")
     return website_data_lower
 
 # --- 4. MAIN EXPORT FUNCTION ---

@@ -1,313 +1,280 @@
-import streamlit as st
-import pandas as pd
-import io
-import os
 import time
-import subprocess
-import sys
+import re
+import requests
+import pandas as pd
+import concurrent.futures # Nødvendig til threading
+from datetime import datetime
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-# Tjekker for Playwright
+# --- CONFIGURATION ---
+URL = "https://fantravel.dk/"
+PROVIDER_NAME = "Fantravel.dk"
+CURRENT_YEAR = 2026
+MAX_WORKERS = 6
+
+# --- ALIAS IMPORT ---
 try:
-    from playwright.sync_api import sync_playwright
+    from Alias import club_alias
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
-    subprocess.run(["playwright", "install", "chromium"])
+    club_alias = {}
 
-from datetime import datetime, timedelta
-# Tilføjet 'Alignment' til imports for at kunne rotere tekst
-from openpyxl.styles import Border, Side, PatternFill, Font, Alignment
-from openpyxl.utils import get_column_letter
+# --- HELPER FUNCTIONS ---
 
-# --- IMPORTER VORES MODULER ---
-# Sørg for at filerne (Footballtravel.py, Olka.py, osv.) ligger i samme mappe
-import Footballtravel   
-import Olka 
-import Fantravel 
-import Fodboldrejseguiden  
+def get_driver():
+    """Starts Chrome driver."""
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-notifications")
+    # For at spare ressourcer i tråde:
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-extensions")
+    return webdriver.Chrome(options=chrome_options)
 
-st.set_page_config(page_title="Football Scraper Pro", layout="wide")
-
-# Styling
-st.markdown("""
-<style>
-    div[data-testid="stButton"] > button[kind="primary"] {
-        background-color: #28a745 !important;
-        border-color: #28a745 !important; 
-        color: white !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-def get_club_names():
-    if not os.path.exists("club_names.xlsx"):
-        st.error("❌ Mangler 'club_names.xlsx'")
-        return []
+def clean_price(price_str):
+    if isinstance(price_str, (int, float)): return float(price_str)
     try:
-        return pd.read_excel("club_names.xlsx", sheet_name="EN", usecols="A", header=None)[0].dropna().astype(str).str.strip().tolist()
-    except: return []
+        clean = str(price_str).lower().replace('dkk', '').replace('kr.', '').replace('.', '').replace(',', '.')
+        return float(clean.strip())
+    except: return 0.0
 
-def main():
-    st.title("⚽ Prissammenligning: Billet + Hotel")
+def parse_danish_date(date_str, default_year=CURRENT_YEAR):
+    dk_months = {
+        "januar": 1, "februar": 2, "marts": 3, "april": 4, "maj": 5, "juni": 6,
+        "juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "december": 12
+    }
+    try:
+        match = re.search(r"(\d+)\.?\s+([a-zA-Z]+)", date_str)
+        if match:
+            day = int(match.group(1))
+            month_name = match.group(2).lower()
+            month = dk_months.get(month_name, 1)
+            
+            year_match = re.search(r"20\d{2}", date_str)
+            year = int(year_match.group(0)) if year_match else default_year
+            
+            return datetime(year, month, day)
+    except: pass
+    return pd.NaT
+
+def calculate_nights(text_string, year=CURRENT_YEAR):
+    try:
+        match = re.search(r"fra\s+(.*?)\s+til\s+(.*?)($|<)", text_string, re.IGNORECASE)
+        if not match: return 0
+
+        d1 = parse_danish_date(match.group(1).strip(), year)
+        d2 = parse_danish_date(match.group(2).strip(), year)
+
+        if pd.isna(d1) or pd.isna(d2): return 0
+
+        if d2 < d1:
+            d2 = d2.replace(year=d1.year + 1)
+
+        delta = d2 - d1
+        return delta.days
+    except: return 0
+
+def check_club_match(row_text, selected_clubs):
+    row_text_lower = str(row_text).lower()
+    for club in selected_clubs:
+        if club.lower() in row_text_lower:
+            return club
+        if club in club_alias:
+            for alias in club_alias[club]:
+                if alias.lower() in row_text_lower:
+                    return club 
+    return None
+
+def handle_cookies(driver):
+    try:
+        xpath = "//*[contains(translate(text(), 'KUN NØDVENDIGE', 'kun nødvendige'), 'kun nødvendige') or contains(text(), 'Afvis')]"
+        btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xpath)))
+        btn.click()
+        time.sleep(1)
+    except: pass
+
+# --- WORKER FUNCTION ---
+
+def process_match_batch(match_data_list):
+    """
+    Denne funktion køres af hver tråd.
+    Den får en liste af kampe, åbner én browser, og behandler dem.
+    """
+    if not match_data_list:
+        return []
+
+    batch_results = []
+    driver = get_driver()
     
-    excel_clubs = get_club_names()
-    if "selected_clubs" not in st.session_state: st.session_state.selected_clubs = set()
+    try:
+        # Håndter cookies én gang per tråd hvis muligt, ellers per side
+        first_run = True
 
-    # Vælg klubber
-    cols = st.columns(4)
-    for i, club in enumerate(excel_clubs):
-        if cols[i%4].button(club, key=club, type="primary" if club in st.session_state.selected_clubs else "secondary", use_container_width=True):
-            if club in st.session_state.selected_clubs: st.session_state.selected_clubs.remove(club)
-            else: st.session_state.selected_clubs.add(club)
-            st.rerun()
-
-    selected = list(st.session_state.selected_clubs)
-
-    if selected:
-        st.divider()
-        if st.button("🔎 Søg efter priser", type="primary"):
+        for item in match_data_list:
+            url = item['url']
+            club_name = item['club']
             
-            # --- START TIMER ---
-            start_time = time.time()
-            
-            # Vægtning af tid (til progress bar)
-            P_FT = 60
-            P_OLKA = 450
-            P_Fantravel = 130
-            P_FRG = 300
-            total_points = P_FT + P_OLKA + P_FRG + P_Fantravel
-            current_points = 0
-            
-            # Progress Bar
-            progress_bar = st.progress(0, text="Starter søgning...")
-            status = st.status("Arbejder...", expanded=True)
-            
-            # --- 1. FootballTravel ---
-            status.write("🤓 Data fra Footballtravel")
-            time.sleep(1)  # Simpel pause for bedre UX
             try:
-                df1 = Footballtravel.get_prices(selected)
-                if not df1.empty: df1['Provider'] = "Footballtravel.dk"
-                st.toast(f"Footballtravel: {len(df1)} tilbud fundet", icon="✅")
-            except Exception as e:
-                st.error(f"Fejl i Footballtravel: {e}")
-                df1 = pd.DataFrame()
-            current_points += P_FT
-            progress_bar.progress(current_points / total_points, text="Footballtravel færdig...")
-            
-            # --- 2. Olka ---
-            status.write("🌐 Data fra Olka")
-            try:
-                df2 = Olka.get_prices(selected)
-                st.toast(f"Olka: {len(df2)} tilbud fundet", icon="✅" if not df2.empty else "⚠️")
-            except Exception as e:
-                st.error(f"Fejl i OLKA: {e}")
-                df2 = pd.DataFrame()
-            current_points += P_OLKA
-            progress_bar.progress(current_points / total_points, text="Olka færdig...")
-
-            # --- 3. Fantravel ---
-            status.write("🤡 Data fra Fantravel")
-            try:
-                df3 = Fantravel.get_prices(selected)
-                st.toast(f"Fantravel: {len(df3)} tilbud fundet", icon="✅" if not df3.empty else "⚠️")
-            except Exception as e:
-                st.error(f"Fejl i Fantravel: {e}")
-                df3 = pd.DataFrame()
-            current_points += P_Fantravel
-            progress_bar.progress(current_points / total_points, text="Fantravel færdig...")
-
-            # --- 4. Fodboldrejseguiden ---
-            status.write("👽 Data fra resterende")
-            try:
-                df5 = Fodboldrejseguiden.get_prices(selected)
-                st.toast(f"Fodboldrejseguiden: {len(df5)} tilbud fundet", icon="✅")
-            except Exception as e:
-                st.error(f"Fejl ved resterende: {e}")
-                df5 = pd.DataFrame()
-            current_points += P_FRG
-            progress_bar.progress(1.0, text="Færdig!")
-
-            # --- STOP TIMER ---
-            end_time = time.time()
-            elapsed = int(end_time - start_time)
-            mins, secs = divmod(elapsed, 60)
-            status.update(label=f"Færdig! (Tid: {mins}m {secs}s)", state="complete", expanded=False)
-            st.success(f"✅ Søgning gennemført på {mins} minutter og {secs} sekunder.")
-
-            # --- SAML DATA ---
-            frames = [df1, df2, df3, df5]
-            if all(df.empty for df in frames):
-                st.warning("Ingen priser fundet.")
-                st.stop()
-            
-            full_df = pd.concat(frames, ignore_index=True)
-
-            # Rensning
-            full_df['Provider'] = full_df['Provider'].fillna("Ukendt").astype(str)
-            full_df = full_df[full_df['Provider'].str.strip() != ""]
-            full_df['SortDate'] = pd.to_datetime(full_df['SortDate'], errors='coerce')
-            full_df = full_df.dropna(subset=['SortDate'])
-
-            # Filter: > 24 timer
-            cutoff = datetime.now() + timedelta(hours=24)
-            full_df = full_df[full_df['SortDate'] > cutoff]
-            if full_df.empty:
-                st.warning("Ingen relevante kampe fundet.")
-                st.stop()
-
-            # Sortering og ID-generering
-            full_df = full_df.sort_values(by=['Club', 'SortDate'])
-            full_df['club_change'] = full_df['Club'] != full_df['Club'].shift()
-            full_df['date_diff'] = full_df['SortDate'].diff().dt.days.abs()
-            full_df['big_gap'] = full_df['date_diff'] > 2 
-            full_df['Match_Group_ID'] = (full_df['club_change'] | full_df['big_gap']).cumsum()
-
-
-            # --- FORBERED DATA TIL EXCEL (TRANSFORMERING) ---
-            
-            # 1. Find alle unikke udbydere og sorter dem
-            all_providers = sorted(full_df['Provider'].unique())
-            if "Footballtravel.dk" in all_providers:
-                all_providers.remove("Footballtravel.dk")
-                all_providers.insert(0, "Footballtravel.dk")
-
-            # 2. Gruppér data per kamp
-            matches_grouped = full_df.groupby('Match_Group_ID').agg({
-                'Club': 'first',
-                'Match': lambda x: max(x, key=len),
-                'SortDate': 'first'
-            }).reset_index()
-
-            match_data_list = []
-            
-            for _, match_row in matches_grouped.iterrows():
-                group_id = match_row['Match_Group_ID']
-                match_name = match_row['Match']
-                date_str = match_row['SortDate'].strftime('%d/%m')
-                display_name = f"{match_name} ({date_str})"
+                driver.get(url)
+                if first_run:
+                    try:
+                        handle_cookies(driver)
+                        first_run = False
+                    except Exception:
+                        pass # Retain first_run = True to retry on the next URL in the chunk
                 
-                prices_in_group = full_df[full_df['Match_Group_ID'] == group_id]
-                
-                provider_data = {}
-                # Liste til at finde min/max for denne specifikke kamp
-                valid_prices = [] 
+                # Vent lidt på load - mere robust end fast sleep
+                try:
+                    WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "booking-title"))
+                    )
+                except:
+                    time.sleep(1) # Fallback
 
-                for _, p_row in prices_in_group.iterrows():
-                    prov = p_row['Provider']
-                    price_val = p_row['Price']
-                    provider_data[prov] = {
-                        'price': price_val,
-                        'nights': p_row['Nights']
-                    }
-                    if price_val > 0:
-                        valid_prices.append(price_val)
-                
-                # --- NYT: Beregn min og max pris for denne kamp ---
-                min_price = min(valid_prices) if valid_prices else None
-                max_price = max(valid_prices) if valid_prices else None
+                # A. Match Name
+                try:
+                    title_elem = driver.find_element(By.CLASS_NAME, "booking-title")
+                    raw_title = title_elem.text
+                    match_name = raw_title.replace("Book din fodboldrejse til", "").strip()
+                except:
+                    match_name = f"{club_name} Match"
 
-                match_data_list.append({
-                    'display': display_name,
-                    'data': provider_data,
-                    'min_price': min_price, # Gem min pris
-                    'max_price': max_price  # Gem max pris
+                # B. Price (Ticket + Hotel)
+                price = 0.0
+                try:
+                    price_elem = driver.find_element(By.CSS_SELECTOR, ".package-option.package-hotel .woocommerce-Price-amount bdi")
+                    price = clean_price(price_elem.text)
+                except:
+                    continue # Skip hvis ingen pris
+
+                # C. Dates & Nights
+                sort_date = pd.NaT
+                nights = 0
+                try:
+                    xpath_date = "//div[contains(@class, 'package-hotel')]//li[contains(text(), 'Hotelophold fra')]"
+                    date_elem = driver.find_element(By.XPATH, xpath_date)
+                    date_text = date_elem.text
+                    
+                    nights = calculate_nights(date_text, CURRENT_YEAR)
+                    
+                    match_start_date = re.search(r"fra\s+(.*?)\s+til", date_text)
+                    if match_start_date:
+                        sort_date = parse_danish_date(match_start_date.group(1), CURRENT_YEAR)
+                except:
+                    pass
+                
+                if pd.isna(sort_date):
+                    sort_date = datetime(2100, 1, 1)
+
+                batch_results.append({
+                    "Club": club_name,
+                    "Match": match_name,
+                    "SortDate": sort_date,
+                    "Price": price,
+                    "Provider": PROVIDER_NAME,
+                    "Nights": int(nights) if isinstance(nights, int) else 0
                 })
+            except Exception as e:
+                import logging
+                logging.error(f"Thread worker failed on {url}: {repr(e)}")
+                continue
 
-            # --- 7. EXCEL GENERERING ---
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                writer.book.create_sheet('Prices')
-                ws = writer.book['Prices']
+    finally:
+        driver.quit()
+        
+    return batch_results
+
+# --- MAIN EXPORT FUNCTION ---
+
+def get_prices(selected_clubs):
+    """
+    Main function called by Streamlit.
+    """
+    print(f"--- FANTRAVEL: Starter søgning for {selected_clubs} ---")
+    
+    # 1. Fast Scan (Requests) to find club links
+    club_links_map = {}
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(URL, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.content, "html.parser")
+            dropdowns = soup.find_all("div", class_="fantravel-leagues-dropdown")
+            for dropdown in dropdowns:
+                for link in dropdown.find_all("a"):
+                    link_text = link.get_text(strip=True)
+                    matched_club = check_club_match(link_text, selected_clubs)
+                    if matched_club:
+                        club_links_map[matched_club] = link.get("href")
+    except Exception as e:
+        print(f"Fantravel Error (Init): {e}")
+        return pd.DataFrame()
+
+    if not club_links_map:
+        return pd.DataFrame()
+
+    # 2. Collect Match URLs (Single Driver - Fast)
+    # Vi henter kun links her, vi besøger dem ikke.
+    matches_to_scrape = [] 
+    
+    driver = get_driver()
+    try:
+        for club_name, club_url in club_links_map.items():
+            try:
+                driver.get(club_url)
+                time.sleep(1)
+                handle_cookies(driver)
+
+                # Click "Vis kun hjemmekampe"
+                driver.execute_script("window.scrollBy(0, 200);")
+                time.sleep(0.5)
+                try:
+                    xpath = "//a[contains(@class, 'drag_scroll_item') and contains(@href, 'vis-kun-hjemmekampe')]"
+                    btn = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((By.XPATH, xpath)))
+                    btn.click()
+                    time.sleep(2)
+                except: pass
+
+                # Get match links
+                soup = BeautifulSoup(driver.page_source, "html.parser")
+                match_links = [l.get("href") for l in soup.find_all("a", class_="product_table_single") if l.get("href")]
                 
-                # Definitioner af styles
-                header_font = Font(bold=True)
-                header_alignment = Alignment(textRotation=45, vertical='bottom', horizontal='center')
-                thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-                
-                # --- NYT: Farve-definitioner ---
-                # Light Green for billigst
-                green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-                # Light Red for dyrest
-                red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
-
-                # --- A. SKRIV HEADERS ---
-                col_idx = 2
-                for match in match_data_list:
-                    cell_match = ws.cell(row=1, column=col_idx, value=match['display'])
-                    cell_match.font = header_font
-                    cell_match.alignment = header_alignment
-                    cell_match.border = thin_border
+                for link in match_links:
+                    matches_to_scrape.append({
+                        "club": club_name,
+                        "url": link
+                    })
                     
-                    cell_nights = ws.cell(row=1, column=col_idx+1, value="Nætter")
-                    cell_nights.font = header_font
-                    cell_nights.alignment = header_alignment
-                    cell_nights.border = thin_border
-                    
-                    ws.column_dimensions[get_column_letter(col_idx)].width = 15
-                    ws.column_dimensions[get_column_letter(col_idx+1)].width = 8
-                    
-                    col_idx += 2
+            except Exception as e:
+                print(f"Fantravel Error ({club_name}): {e}")
+    finally:
+        driver.quit()
 
-                # --- B. SKRIV RÆKKER (VIRKSOMHEDER) ---
-                row_idx = 2
-                
-                for provider in all_providers:
-                    cell_prov = ws.cell(row=row_idx, column=1, value=provider)
-                    cell_prov.font = Font(bold=True)
-                    cell_prov.border = Border(top=Side(style='medium'), bottom=Side(style='medium'), left=Side(style='medium'), right=Side(style='medium'))
-                    
-                    col_idx = 2
-                    for match in match_data_list:
-                        p_data = match['data'].get(provider, {'price': 0, 'nights': 0})
-                        price = p_data['price']
-                        nights = p_data['nights']
-                        
-                        # Skriv Pris
-                        cell_p = ws.cell(row=row_idx, column=col_idx, value=price if price > 0 else "")
-                        cell_p.border = thin_border
-                        
-                        # --- NYT: Logik for farvning af pris ---
-                        if price > 0:
-                            # Er det den billigste? (Prioriteret)
-                            if price == match['min_price']:
-                                cell_p.fill = green_fill
-                            # Er det den dyreste? (Og sørg for vi ikke farver rød hvis der kun er én pris, som også er min)
-                            elif price == match['max_price']:
-                                cell_p.fill = red_fill
-                        
-                        # Skriv Nætter
-                        cell_n = ws.cell(row=row_idx, column=col_idx+1, value=nights if nights > 0 else "")
-                        cell_n.border = thin_border
-                        
-                        col_idx += 2
-                    
-                    row_idx += 1
+    print(f"--- FANTRAVEL: Fandt {len(matches_to_scrape)} kampe. Starter tråde... ---")
 
-                ws.column_dimensions['A'].width = 25
-                ws.freeze_panes = "B2"
+    # 3. Parallel Processing (Worker Threads)
+    final_data = []
+    
+    if matches_to_scrape:
+        # Del listen op i chunks baseret på MAX_WORKERS
+        # Dette sikrer, at hver tråd får en stak links og beholder sin browser åben
+        chunk_size = (len(matches_to_scrape) + MAX_WORKERS - 1) // MAX_WORKERS
+        chunks = [matches_to_scrape[i:i + chunk_size] for i in range(0, len(matches_to_scrape), chunk_size)]
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(process_match_batch, chunk) for chunk in chunks]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    final_data.extend(future.result())
+                except Exception as e:
+                    import logging
+                    logging.error(f"Thread batch fatally crashed: {repr(e)}")
 
-            # Download Knap og Preview (uændret)
-            timestamp = datetime.now().strftime("%H-%M")
-            st.download_button(
-                "📥 Download Excel", 
-                output.getvalue(), 
-                f"prices_matrix_{timestamp}.xlsx", 
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-            # Vis preview i Streamlit (Vi laver en simpel dataframe til visning da Streamlit ikke viser rotationer)
-            preview_df = pd.DataFrame(index=all_providers)
-            for m in match_data_list:
-                col_name = m['display']
-                # Byg en kolonne med priser for preview
-                prices = []
-                for p in all_providers:
-                    val = m['data'].get(p, {}).get('price', 0)
-                    prices.append(val if val > 0 else 0)
-                preview_df[col_name] = prices
-            
-            st.write("Preview af data:")
-            st.dataframe(preview_df, use_container_width=True)
-
-if __name__ == "__main__":
-    main()
+    # Return DataFrame
+    return pd.DataFrame(final_data)
