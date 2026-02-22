@@ -43,6 +43,13 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
     from playwright.sync_api import sync_playwright
 
+@st.cache_resource
+def install_playwright_chromium():
+    os.system("playwright install chromium")
+    os.system("playwright install-deps chromium")
+
+install_playwright_chromium()
+
 subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
 
 st.set_page_config(page_title="Football Scraper Pro", layout="wide")
