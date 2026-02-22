@@ -3,8 +3,6 @@ import pandas as pd
 import io
 import os
 import time
-import subprocess
-import sys
 import requests
 import concurrent.futures
 from datetime import datetime, timedelta
@@ -36,21 +34,6 @@ def send_discord_notification(selected_clubs, execution_time):
         requests.post(webhook_url, json=payload)
     except Exception as e:
         print(f"Discord fejl: {e}")
-
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
-    from playwright.sync_api import sync_playwright
-
-@st.cache_resource
-def install_playwright_chromium():
-    os.system("playwright install chromium")
-    os.system("playwright install-deps chromium")
-
-install_playwright_chromium()
-
-subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
 
 st.set_page_config(page_title="Football Scraper Pro", layout="wide")
 
@@ -105,10 +88,15 @@ def main():
                 "Resterende": pd.DataFrame()
             }
 
+            try:
+                results["Olka"] = Olka.get_prices(selected)
+                status.write(f"Data hentet fra Olka: {len(results['Olka'])} tilbud fundet")
+            except Exception as e:
+                st.error(f"Fejl i Olka: {e}")
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = {
                     executor.submit(Footballtravel.get_prices, selected): "Footballtravel",
-                    executor.submit(Olka.get_prices, selected): "Olka",
                     executor.submit(Fantravel.get_prices, selected): "Fantravel",
                     executor.submit(Fodboldrejseguiden.get_prices, selected): "Resterende"
                 }
@@ -160,8 +148,6 @@ def main():
             full_df['date_diff'] = full_df['SortDate'].diff().dt.days.abs()
             full_df['big_gap'] = full_df['date_diff'] > 2 
             full_df['Match_Group_ID'] = (full_df['club_change'] | full_df['big_gap']).cumsum()
-
-            # --- FORBERED DATA TIL EXCEL (TRANSFORMERING) ---
             
             all_providers = sorted(full_df['Provider'].unique())
             if "Footballtravel.dk" in all_providers:
@@ -210,7 +196,6 @@ def main():
                     'club': match_row['Club']
                 })
 
-            # --- 7. EXCEL GENERERING ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 writer.book.create_sheet('Prices')

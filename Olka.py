@@ -87,18 +87,12 @@ TEAM_MAPPING = {
 }
 
 def check_club_match(row_text, selected_clubs):
-    """
-    Checks if one of the selected clubs (or their aliases) exists in the text.
-    Matches the logic from Footballtravel.py.
-    """
     row_text_lower = str(row_text).lower()
     
     for club in selected_clubs:
-        # 1. Check direct name
         if club.lower() in row_text_lower:
             return club
         
-        # 2. Check aliases
         if club in club_alias:
             for alias in club_alias[club]:
                 if alias.lower() in row_text_lower:
@@ -106,7 +100,6 @@ def check_club_match(row_text, selected_clubs):
     return None
 
 def get_slug(team_name, is_home=False):
-    """Generates the URL slug for a team."""
     if not isinstance(team_name, str): return ""
     clean_name = team_name.strip()
     
@@ -125,7 +118,6 @@ def get_slug(team_name, is_home=False):
     return generel_slug
 
 def generate_links(selected_clubs):
-    """Fetches CSV data and generates a DataFrame of matches with Links based on selected clubs."""
     url = "https://api.footballtravel.com/feed/footballtravel-dk/all-offers.csv"
     print("Fetching CSV data...")
     
@@ -134,12 +126,9 @@ def generate_links(selected_clubs):
         response.encoding = 'utf-8'
         df = pd.read_csv(io.StringIO(response.text))
         
-        # Filter for 'billet + hotel' (Column B / Index 1)
         col_b_values = df.iloc[:, 1].astype(str).str.strip().str.lower()
         df_filtered = df[col_b_values == 'billet + hotel'].copy()
         
-        # Filter by Club (Column H / Index 7) using the Alias logic
-        # We assume column 7 is the Home team/Club name
         mask = df_filtered.iloc[:, 7].apply(lambda x: check_club_match(x, selected_clubs) is not None)
         
         results = df_filtered[mask].iloc[:, [7, 8, 14]].copy()
@@ -162,7 +151,6 @@ def generate_links(selected_clubs):
             home_team = row['Home'].strip()
             away_team = row['Away'].strip()
             
-            # Find which user-selected club this match belongs to (for sorting/tracking)
             found_club = check_club_match(home_team, selected_clubs)
             
             home_slug = get_slug(home_team, is_home=True)
@@ -171,10 +159,9 @@ def generate_links(selected_clubs):
             link = URL_TEMPLATE.format(date=date_str, home=home_slug, away=away_slug)
             match_display = f"{home_team} – {away_team}"
 
-            # UPDATED: Keys matching EN_scraper_app requirements
             generated_links.append({
-                'Club': found_club if found_club else home_team,  # Key fixed
-                'SortDate': date_obj,                             # Key fixed (datetime object)
+                'Club': found_club if found_club else home_team,  
+                'SortDate': date_obj,                             
                 'Date': display_date,
                 'Match': match_display,
                 'Link': link
@@ -187,18 +174,16 @@ def generate_links(selected_clubs):
         return pd.DataFrame()
 
     df_final = pd.DataFrame(generated_links)
-    # Sort using new keys
     df_final = df_final.sort_values(by=['Club', 'SortDate'])
     return df_final
 
 def scrape_prices(df_matches):
-    """Iterates through the DataFrame and scrapes prices with human-like delays."""
     print("\nStarting Scraper (Browser will open)...")
     
     prices = []
     
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True) 
+        browser = p.chromium.launch(headless=True, executable_path="/usr/bin/chromium") 
         page = browser.new_page()
         
         total = len(df_matches)
@@ -207,11 +192,9 @@ def scrape_prices(df_matches):
             url = row['Link']
             print(f"[{index + 1}/{total}] Checking: {row['Match']}")
             
-            # --- HUMAN DELAY START ---
             sleep_time = random.uniform(0.6, 0.8)
             print(f"   ...waiting {sleep_time:.2f}s to act human...")
             time.sleep(sleep_time) 
-            # -------------------------
 
             try:
                 page.goto(url, timeout=60000)
@@ -253,12 +236,6 @@ def scrape_prices(df_matches):
     return df_matches
 
 def get_prices(selected_clubs):
-    """
-    Main entry point for this module, similar to Footballtravel.py
-    1. Generate links based on club input (and aliases).
-    2. Scrape prices.
-    3. Return final DataFrame.
-    """
     df = generate_links(selected_clubs)
     
     if df.empty:
@@ -267,17 +244,13 @@ def get_prices(selected_clubs):
 
     df_results = scrape_prices(df)
     
-    # UPDATED: Add missing columns for EN_scraper_app compatibility
     df_results['Provider'] = "Olka Express"
-    # Sæt Nætter til 2, HVIS der er en pris (og den ikke er None/0). Ellers 0.
     df_results['Nights'] = df_results['Price'].apply(lambda x: 2 if pd.notnull(x) and x > 0 else 0)
     
-    # UPDATED: Return all necessary columns including SortDate and Club
     output_df = df_results[['Club', 'SortDate', 'Date', 'Match', 'Price', 'Nights', 'Provider', 'Link']]
     return output_df
 
 if __name__ == "__main__":
-    # Test Input
     my_clubs = [
         "Liverpool", 
         "Arsenal"
