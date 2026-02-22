@@ -200,29 +200,30 @@ def scrape_prices(df_matches):
             os.system("playwright install chromium")
             browser = p.chromium.launch(headless=True, args=launch_args)
             
-        page = browser.new_page()
+        page = browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        )
         
         total = len(df_matches)
         
         for index, row in df_matches.iterrows():
             url = row['Link']
             print(f"[{index + 1}/{total}] Checking: {row['Match']}")
-            
-            sleep_time = random.uniform(0.6, 0.8)
-            print(f"   ...waiting {sleep_time:.2f}s to act human...")
-            time.sleep(sleep_time) 
 
             try:
                 page.goto(url, timeout=60000)
-                time.sleep(random.uniform(0.6, 0.8))
-
+                
                 try:
                     cookie_knap = page.get_by_role("button", name=re.compile("Godkend|Allow all|Accepter", re.IGNORECASE))
-                    if cookie_knap.is_visible(timeout=2000):
+                    if cookie_knap.is_visible(timeout=3000):
                         cookie_knap.click()
-                        time.sleep(1.1) 
                 except:
                     pass
+
+                try:
+                    page.wait_for_selector("div.package", timeout=15000)
+                except:
+                    print("   -> Timeout waiting for packages to render.")
 
                 pakke_kort = page.locator("div.package").filter(has_text="Billet + hotel").first
                 
