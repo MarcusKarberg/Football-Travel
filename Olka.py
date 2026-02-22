@@ -6,6 +6,8 @@ import time
 import random
 from datetime import datetime
 from playwright.sync_api import sync_playwright
+import os
+import shutil
 
 # --- IMPORT ALIAS ---
 # Matches the logic in Footballtravel.py to handle team variations
@@ -183,7 +185,21 @@ def scrape_prices(df_matches):
     prices = []
     
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path="/usr/bin/chromium") 
+        system_chromium = shutil.which("chromium") or shutil.which("chromium-browser")
+        
+        launch_args = [
+            "--no-sandbox", 
+            "--disable-dev-shm-usage", 
+            "--disable-gpu",
+            "--disable-blink-features=AutomationControlled"
+        ]
+        
+        if system_chromium:
+            browser = p.chromium.launch(headless=True, executable_path=system_chromium, args=launch_args)
+        else:
+            os.system("playwright install chromium")
+            browser = p.chromium.launch(headless=True, args=launch_args)
+            
         page = browser.new_page()
         
         total = len(df_matches)
