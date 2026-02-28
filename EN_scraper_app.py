@@ -89,14 +89,17 @@ def main():
             }
 
             try:
-                results["Olka"] = Olka.get_prices(selected)
-                status.write(f"Data hentet fra Olka: {len(results['Olka'])} tilbud fundet")
+                ft_data = Footballtravel.get_prices(selected)
+                if not ft_data.empty:
+                    ft_data['Provider'] = "Footballtravel.dk"
+                results["Footballtravel"] = ft_data
+                status.write(f"Data hentet fra Footballtravel: {len(results['Footballtravel'])} tilbud fundet")
             except Exception as e:
-                st.error(f"Fejl i Olka: {e}")
+                st.error(f"Fejl i Footballtravel: {e}")
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = {
-                    executor.submit(Footballtravel.get_prices, selected): "Footballtravel",
+                    executor.submit(Olka.get_prices, selected): "Olka",
                     executor.submit(Fantravel.get_prices, selected): "Fantravel",
                     executor.submit(Fodboldrejseguiden.get_prices, selected): "Resterende"
                 }
@@ -105,8 +108,6 @@ def main():
                     provider = futures[future]
                     try:
                         data = future.result()
-                        if provider == "Footballtravel" and not data.empty:
-                            data['Provider'] = "Footballtravel.dk"
                         results[provider] = data
                         status.write(f"Data hentet fra {provider}: {len(data)} tilbud fundet")
                     except Exception as e:
