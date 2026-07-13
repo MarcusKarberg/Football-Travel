@@ -1,4 +1,3 @@
-import time
 import re
 import requests
 import pandas as pd
@@ -6,17 +5,12 @@ import concurrent.futures
 import logging
 from datetime import datetime
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # --- CONFIGURATION ---
 URL = "https://fantravel.dk/"
 PROVIDER_NAME = "Fantravel.dk"
 CURRENT_YEAR = 2026
-MAX_WORKERS = 15 # Øget da requests-baserede tråde forbruger minimal RAM
+MAX_WORKERS = 15
 
 # --- ALIAS IMPORT ---
 try:
@@ -25,18 +19,6 @@ except ImportError:
     club_alias = {}
 
 # --- HELPER FUNCTIONS ---
-
-def get_driver():
-    chrome_options = Options()
-    chrome_options.page_load_strategy = 'eager' # Blokerer indlæsning af subressourcer
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-notifications")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--blink-settings=imagesEnabled=false") # Forhindrer billed-download
-    return webdriver.Chrome(options=chrome_options)
 
 def clean_price(price_str):
     if isinstance(price_str, (int, float)): return float(price_str)
@@ -95,33 +77,37 @@ def process_single_match(item):
             
         soup = BeautifulSoup(resp.content, "html.parser")
 
-        # A. Match Name
         try:
-            title_elem = soup.find(class_="booking-title")
-            raw_title = title_elem.get_text(strip=True) if title_elem else ""
-            match_name = raw_title.replace("Book din fodboldrejse til", "").strip() or f"{club_name} Match"
+            h1_elem = soup.find("h1")
+            match_name = h1_elem.get_text(strip=True) if h1_elem else f"{club_name} Match"
         except:
             match_name = f"{club_name} Match"
 
-        # B. Price
+        target_package = None
+        for btn in soup.find_all("button"):
+            h3 = btn.find("h3")
+            if h3 and "billetter & hotel" in h3.get_text(strip=True).lower():
+                target_package = btn
+                break
+                
+        if not target_package:
+            return None
+
         price = 0.0
         try:
-            hotel_pkg = soup.find(class_="package-option package-hotel")
-            if hotel_pkg:
-                price_elem = hotel_pkg.find("bdi")
-                if price_elem:
-                    price = clean_price(price_elem.get_text(strip=True))
+            price_elem = target_package.find("span", class_="tp-tabular")
+            if price_elem:
+                price = clean_price(price_elem.get_text(strip=True))
         except:
-            return None
+            pass
 
         if not price:
             return None
 
-        # C. Dates & Nights
         sort_date = datetime(2100, 1, 1)
         nights = 0
         try:
-            date_li = soup.find(lambda tag: tag.name == "li" and "Hotelophold fra" in tag.text)
+            date_li = target_package.find(lambda tag: tag.name == "li" and "Hotelophold fra" in tag.text)
             if date_li:
                 date_text = date_li.get_text(strip=True)
                 nights = calculate_nights(date_text, CURRENT_YEAR)
@@ -130,7 +116,8 @@ def process_single_match(item):
                     parsed_date = parse_danish_date(match_start_date.group(1), CURRENT_YEAR)
                     if not pd.isna(parsed_date):
                         sort_date = parsed_date
-        except: pass
+        except:
+            pass
 
         return {
             "Club": club_name,
@@ -147,56 +134,29 @@ def process_single_match(item):
 # --- MAIN EXPORT FUNCTION ---
 
 def get_prices(selected_clubs):
-    club_links_map = {}
+    matches_to_scrape = [] 
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(URL, headers=headers, timeout=10)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.content, "html.parser")
-            dropdowns = soup.find_all("div", class_="fantravel-leagues-dropdown")
-            for dropdown in dropdowns:
-                for link in dropdown.find_all("a"):
-                    link_text = link.get_text(strip=True)
-                    matched_club = check_club_match(link_text, selected_clubs)
-                    if matched_club:
-                        club_links_map[matched_club] = link.get("href")
+            
+            for a in soup.find_all("a", href=True):
+                href = a.get("href")
+                span = a.find("span", class_="truncate")
+                if span:
+                    link_text = span.get_text(strip=True)
+                    parts = link_text.replace("–", "-").split("-")
+                    if len(parts) >= 2:
+                        home_team = parts[0].strip()
+                        matched_club = check_club_match(home_team, selected_clubs)
+                        if matched_club:
+                            full_url = href if href.startswith("http") else f"https://fantravel.dk{href}"
+                            if not any(m['url'] == full_url for m in matches_to_scrape):
+                                matches_to_scrape.append({"club": matched_club, "url": full_url})
     except Exception as e:
         logging.error(f"Fantravel Init Error: {repr(e)}")
         return pd.DataFrame()
-
-    if not club_links_map:
-        return pd.DataFrame()
-
-    matches_to_scrape = [] 
-    driver = get_driver()
-    try:
-        for club_name, club_url in club_links_map.items():
-            try:
-                driver.get(club_url)
-                
-                try:
-                    xpath = "//*[contains(translate(text(), 'KUN NØDVENDIGE', 'kun nødvendige'), 'kun nødvendige') or contains(text(), 'Afvis')]"
-                    WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xpath))).click()
-                except: pass
-                
-                driver.execute_script("window.scrollBy(0, 200);")
-                try:
-                    xpath = "//a[contains(@class, 'drag_scroll_item') and contains(@href, 'vis-kun-hjemmekampe')]"
-                    btn = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((By.XPATH, xpath)))
-                    btn.click()
-                    time.sleep(1) # Påkrævet for DOM-rendering af nye links
-                except: pass
-
-                soup = BeautifulSoup(driver.page_source, "html.parser")
-                match_links = [l.get("href") for l in soup.find_all("a", class_="product_table_single") if l.get("href")]
-                
-                for link in match_links:
-                    matches_to_scrape.append({"club": club_name, "url": link})
-                    
-            except Exception as e:
-                logging.error(f"Selenium UI loop failed for {club_name}: {repr(e)}")
-    finally:
-        driver.quit()
 
     final_data = []
     if matches_to_scrape:
